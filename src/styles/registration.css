@@ -1,0 +1,92 @@
+/* RAK Properties — Broker registration page.
+   Uses the same design tokens/fonts already defined in portal.css's :root
+   (--rak-navy, --font-display, etc.) — this file only adds the page's own
+   layout/component styles, scoped under .registration so nothing here leaks
+   onto other pages. */
+
+.registration{font-family:var(--font-body);color:var(--rak-navy);background:var(--rak-mist);font-size:15px;line-height:1.5em;-webkit-font-smoothing:antialiased;min-height:100vh}
+.registration *{box-sizing:border-box;margin:0;padding:0}
+.registration img{display:block}
+
+.registration .topbar{background:var(--rak-white);border-bottom:1px solid var(--rak-navy-20)}
+.registration .topbar-inner{max-width:1080px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between}
+.registration .topbar img{height:36px;width:auto;display:block}
+.registration .topbar .back{font-family:var(--font-medium);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--rak-navy);text-decoration:none}
+.registration .topbar .back:hover{color:var(--rak-terracotta)}
+
+.registration .page{max-width:1080px;margin:0 auto;padding:56px 24px 80px}
+
+.registration .eyebrow{font-family:var(--font-medium);font-size:12px;letter-spacing:3px;text-transform:uppercase;color:var(--rak-terracotta)}
+.registration h1{font-family:var(--font-display);font-weight:400;font-size:42px;line-height:1.1em;text-transform:capitalize;margin:14px 0 12px}
+.registration .lead{color:var(--rak-navy-60);max-width:640px;margin-bottom:40px}
+
+.registration .type-select{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:44px}
+.registration .type-card{position:relative;display:block;padding:24px;background:var(--rak-white);border:1px solid var(--rak-navy-20);cursor:pointer;transition:border-color .2s ease}
+.registration .type-card input{position:absolute;opacity:0;pointer-events:none}
+.registration .type-card .t{font-family:var(--font-medium);font-size:14px;letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:8px}
+.registration .type-card .d{font-size:13px;color:var(--rak-navy-60);display:block;line-height:1.5em}
+.registration .type-card .mark{position:absolute;top:20px;right:20px;width:22px;height:22px;border:2px solid var(--rak-navy-20);border-radius:50%;transition:all .2s ease}
+.registration .type-card.active{border-color:var(--rak-navy);box-shadow:0 0 0 1px var(--rak-navy) inset}
+.registration .type-card.active .mark{border-color:var(--rak-terracotta);background:var(--rak-terracotta);box-shadow:inset 0 0 0 4px var(--rak-white)}
+
+.registration .card{background:var(--rak-white);padding:36px;margin-bottom:18px;border:1px solid rgba(5,28,44,.08)}
+.registration .card h2{font-family:var(--font-medium);font-size:14px;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px}
+.registration .card .sub{font-size:13px;color:var(--rak-navy-60);margin-bottom:26px}
+
+.registration .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px 24px}
+.registration .span-2{grid-column:1 / -1}
+
+.registration label{display:block;font-family:var(--font-medium);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px}
+.registration label .req{color:var(--rak-terracotta)}
+.registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration select,.registration textarea{
+  width:100%;height:50px;padding:0 16px;font-family:var(--font-body);font-size:15px;color:var(--rak-navy);
+  background:var(--rak-mist);border:none;border-bottom:2px solid var(--rak-navy-20);border-radius:0;outline:none;
+  transition:border-color .2s ease;
+}
+.registration textarea{height:auto;padding:14px 16px;min-height:96px;resize:vertical}
+.registration select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%23051c2c' fill='none' stroke-width='1.5'/></svg>");background-repeat:no-repeat;background-position:right 16px center}
+.registration input:focus,.registration select:focus,.registration textarea:focus{border-bottom-color:var(--rak-terracotta)}
+.registration input::placeholder,.registration textarea::placeholder{color:var(--rak-navy-60)}
+
+.registration .phone-row{display:flex;gap:10px}
+.registration .phone-row select{flex:0 0 110px}
+
+.registration .upload{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--rak-mist);border:1px dashed var(--rak-navy-20);padding:14px 16px;flex-wrap:wrap}
+.registration .upload .hint{font-size:12px;color:var(--rak-navy-60)}
+.registration .upload .file-name{font-size:13px;font-family:var(--font-medium)}
+.registration .btn-ghost{display:inline-block;padding:0 20px;height:36px;line-height:34px;border-radius:50px;border:2px solid var(--rak-navy);background:transparent;color:var(--rak-navy);font-family:var(--font-medium);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:all .25s ease}
+.registration .btn-ghost:hover{background:var(--rak-navy);color:var(--rak-white)}
+
+.registration .field-msg{display:none;font-size:12px;color:var(--rak-terracotta);margin-top:6px}
+.registration .field.has-error .field-msg{display:block}
+.registration .field.has-error input,.registration .field.has-error select{border-bottom-color:var(--rak-terracotta)}
+
+.registration .consent{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--rak-navy-60);margin:6px 0 26px}
+.registration .consent input{margin-top:3px;accent-color:var(--rak-navy);width:15px;height:15px;flex:none}
+.registration .consent a{color:var(--rak-navy);border-bottom:1px solid var(--rak-powder);text-decoration:none}
+
+.registration .btn{display:inline-block;padding:0 42px;text-align:center;background:var(--rak-navy);color:var(--rak-white);font-size:12px;text-transform:uppercase;min-width:200px;height:48px;line-height:46px;border-radius:50px;border:2px solid var(--rak-navy);font-family:var(--font-medium);letter-spacing:1.5px;cursor:pointer;transition:background .25s ease,color .25s ease}
+.registration .btn:hover{background:transparent;color:var(--rak-navy)}
+.registration a.btn{text-decoration:none;display:inline-block}
+
+.registration .success{background:var(--rak-white);border-top:3px solid var(--rak-terracotta);padding:48px;text-align:center}
+.registration .success h2{font-family:var(--font-display);font-size:30px;font-weight:400;margin-bottom:10px}
+.registration .success p{color:var(--rak-navy-60);max-width:480px;margin:0 auto}
+.registration .success .ref{font-size:14px;color:var(--rak-navy);margin:2px auto 16px}
+.registration .success .ref b{font-family:var(--font-medium);font-weight:normal;letter-spacing:.5px}
+.registration .success .status-chip{display:inline-block;font-family:var(--font-medium);font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:4px 12px;border-radius:50px;background:#f6ece8;color:var(--rak-terracotta);vertical-align:middle}
+.registration .success .next-steps{display:inline-block;text-align:left;margin:16px auto 4px;padding-left:18px;max-width:440px;color:var(--rak-navy-60);font-size:13px;line-height:1.6em}
+.registration .success .next-steps li{margin-bottom:8px}
+.registration .success .next-steps b{font-family:var(--font-medium);font-weight:normal;color:var(--rak-navy)}
+.registration .success .small{font-size:12px;margin-top:12px}
+
+.registration footer{padding:28px 24px;text-align:center;font-size:11px;color:var(--rak-navy-60)}
+
+@media (max-width:760px){
+  .registration h1{font-size:32px}
+  .registration .type-select,.registration .grid{grid-template-columns:1fr}
+  .registration .card{padding:26px 20px}
+  .registration .upload{flex-wrap:wrap}
+  .registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration select,.registration textarea{font-size:16px}
+  .registration .topbar img{height:30px}
+}
