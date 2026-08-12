@@ -33,9 +33,24 @@ export const authApi = apiClient.injectEndpoints({
     }),
     forgotPassword: builder.mutation({
       query: (email) => ({
-        url: '/auth/forgot-password',
+        url: '/Broker/forgot-password',
         method: 'POST',
         body: { email },
+      }),
+    }),
+    // Backs the reset-password landing page (see ResetPasswordPage.jsx) — checked once on
+    // mount so an expired/invalid link shows a message instead of a form nobody can submit.
+    validateResetLink: builder.query({
+      query: ({ ref, token }) => ({
+        url: '/Broker/validate-reset-link',
+        params: { Ref: ref, Token: token },
+      }),
+    }),
+    resetPassword: builder.mutation({
+      query: ({ ref, token, newPassword }) => ({
+        url: '/Broker/reset-password',
+        method: 'POST',
+        body: { ref, token, newPassword },
       }),
     }),
   }),
@@ -44,4 +59,6 @@ export const authApi = apiClient.injectEndpoints({
 export const {
   useLoginMutation,
   useForgotPasswordMutation,
+  useValidateResetLinkQuery,
+  useResetPasswordMutation,
 } = authApi

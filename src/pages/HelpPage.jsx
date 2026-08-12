@@ -99,7 +99,7 @@ const FAQ_SECTIONS = [
       },
       {
         q: 'What’s the difference between a hold and an EOI?',
-        a: 'A hold keeps the unit for your client for 48 hours with no payment. An EOI of AED 50,000 secures it beyond the hold while the down payment is collected.',
+        a: 'A hold keeps the unit for your client for 48 hours with no payment. Converting to EOI emails them a payment link for AED 50,000 — but the same 48-hour hold still applies, so they need to pay before it expires or the unit is released.',
       },
       {
         q: 'Which payment plans are available?',
@@ -111,7 +111,7 @@ const FAQ_SECTIONS = [
       },
       {
         q: 'What do the booking statuses mean?',
-        a: 'On hold — 48-hour hold, no payment yet. EOI paid — secured while the down payment is collected. Reserved — down payment received. SPA signed — milestone payments under way. Completed — fully paid and handed over.',
+        a: 'On hold — 48-hour hold, no payment yet. EOI — payment link sent, still within the same 48-hour hold. EOI Paid — the AED 50,000 EOI has been paid. Reserved — down payment received. SPA signed — milestone payments under way. Completed — fully paid and handed over.',
       },
     ],
   },

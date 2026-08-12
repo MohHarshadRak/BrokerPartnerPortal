@@ -27,6 +27,7 @@ function PortalLayout() {
   const dispatch = useDispatch()
   const navigate = useNavigate()
   const user = useSelector((state) => state.auth.user)
+  const serverUnreachable = useSelector((state) => state.ui.serverUnreachable)
 
   const handleLogout = () => {
     dispatch(logout())
@@ -38,7 +39,7 @@ function PortalLayout() {
       <header className="topbar">
         <div className="topbar-inner">
           <NavLink className="brand" to="/dashboard" aria-label="RAK Properties — Broker Portal">
-            <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+            <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
             <span className="wordmark" aria-hidden="true">
               RAK<small>PROPERTIES</small>
             </span>
@@ -83,6 +84,12 @@ function PortalLayout() {
           </button>
         </div>
       </header>
+
+      {serverUnreachable && (
+        <div className="offline-banner" role="alert">
+          Can't reach the server — check your connection and try again.
+        </div>
+      )}
 
       <main className="page">
         <Outlet />

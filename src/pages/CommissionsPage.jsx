@@ -4,19 +4,23 @@ import { useSelector } from 'react-redux'
 import { useGetCommissionsSummaryQuery, useGetCommissionsQuery, useSubmitInvoiceMutation } from '../features/commissions/commissionsApi'
 import { useToast } from '../components/useToast'
 
+// Matches Broker_CommissionDetails_Select's own CommStatus text exactly (see
+// CommissionsService.MapStatus for how these 4 values still bucket into the pending/approved/
+// paid pill colors and action buttons per row — this filter just matches the raw SP text).
 const STATUS_FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Pending' },
-  { key: 'approved', label: 'Approved' },
-  { key: 'paid', label: 'Paid' },
+  { key: 'Commission not initiated', label: 'Commission not initiated' },
+  { key: 'Commission approval in process', label: 'Commission approval in process' },
+  { key: 'Commission Processed', label: 'Commission Processed' },
+  { key: 'Dispersal not initiated', label: 'Dispersal not initiated' },
 ]
 
 function CommissionsPage() {
   const user = useSelector((state) => state.auth.user)
   const { data: summary } = useGetCommissionsSummaryQuery()
   const { data: commissions } = useGetCommissionsQuery()
-  const [submitInvoice] = useSubmitInvoiceMutation()
-  const { toastNode, showError, showSuccess, showToast } = useToast()
+  const [submitInvoice, { isLoading: isSubmittingInvoice }] = useSubmitInvoiceMutation()
+  const { toastNode, showError, showToast } = useToast()
 
   const [statusFilter, setStatusFilter] = useState('all')
   const [statementOpen, setStatementOpen] = useState(false)
@@ -24,17 +28,49 @@ function CommissionsPage() {
   const [receipt, setReceipt] = useState(null)
   const [invoiceLine, setInvoiceLine] = useState(null)
   const [invoiceNo, setInvoiceNo] = useState('')
+  const [invoiceDate, setInvoiceDate] = useState('')
   const [invoiceFile, setInvoiceFile] = useState(null)
   const [invoiceSent, setInvoiceSent] = useState(false)
 
   const rows = commissions ?? []
-  const filteredRows = useMemo(() => rows.filter((r) => statusFilter === 'all' || r.status === statusFilter), [rows, statusFilter])
+  const filteredRows = useMemo(() => rows.filter((r) => statusFilter === 'all' || r.statusLabel === statusFilter), [rows, statusFilter])
 
+  // Defaults invoice date to today, in local date form for <input type="date">. The invoice
+  // amount isn't a separate field — it's already shown at the top of this modal from the
+  // commission line's own amount.
+  const openInvoice = (line) => {
+    setInvoiceLine(line)
+    setInvoiceDate(new Date().toISOString().slice(0, 10))
+  }
+
+  // Mirrors legacy btnSave_Click's own validation order (date, invoice number, then the file)
+  // — unlike legacy, a failed check here actually blocks the save rather than just setting an
+  // error label and continuing anyway.
   const handleSubmitInvoice = async () => {
+    if (!invoiceDate) {
+      showError('Please enter the invoice date.')
+      return
+    }
+    if (!invoiceNo.trim()) {
+      showError('Please enter the invoice number.')
+      return
+    }
+    if (!invoiceFile) {
+      showError('Please attach the invoice PDF.')
+      return
+    }
+
     try {
-      await submitInvoice({ id: invoiceLine.id, invoiceNo }).unwrap()
+      await submitInvoice({
+        transactionId: invoiceLine.id,
+        commDetailId: invoiceLine.commDetailId,
+        unitId: invoiceLine.unitId,
+        invoiceNo,
+        invoiceDate,
+        invoiceAmount: invoiceLine.commissionAed,
+        invoiceFile,
+      }).unwrap()
       setInvoiceSent(true)
-      showSuccess('Invoice submitted successfully.')
     } catch {
       showError('Could not submit the invoice — please try again.')
     }
@@ -43,6 +79,7 @@ function CommissionsPage() {
   const closeInvoice = () => {
     setInvoiceLine(null)
     setInvoiceNo('')
+    setInvoiceDate('')
     setInvoiceFile(null)
     setInvoiceSent(false)
   }
@@ -63,22 +100,21 @@ function CommissionsPage() {
         <div className="kpi">
           <p className="label">Earned YTD</p>
           <p className="value">{summary?.earnedYtd ?? 'AED 0'}</p>
-          <p className="sub">{summary?.earnedYtdSub ?? ''}</p>
+          <p className="sub">{summary?.earnedYtdDealCount ?? 0} deals · {summary?.earnedYtdYear ?? new Date().getFullYear()} to date</p>
         </div>
         <div className="kpi">
-          <p className="label">Paid out</p>
-          <p className="value">{summary?.paidOut ?? 'AED 0'}</p>
-          <p className="sub">{summary?.paidOutSub ?? ''}</p>
+          <p className="label">Commission dispersed amount</p>
+          <p className="value">{summary?.commissionDispersed ?? 'AED 0'}</p>
+          <p className="sub">{summary?.commissionDispersedDealCount ?? 0} deals · {summary?.commissionDispersedMonthLabel || 'last month'}</p>
+        </div>
+        <div className="kpi">
+          <p className="label">Commission Processed</p>
+          <p className="value">{summary?.commissionProcessed ?? 'AED 0'}</p>
         </div>
         <div className="kpi">
           <p className="label">Pending</p>
           <p className="value">{summary?.pending ?? 'AED 0'}</p>
-          <p className="sub">{summary?.pendingSub ?? ''}</p>
-        </div>
-        <div className="kpi">
-          <p className="label">Next payout run</p>
-          <p className="value">{summary?.nextPayoutDate ?? '—'}</p>
-          <p className="sub">monthly cycle</p>
+          <p className="sub">Processed − dispersed</p>
         </div>
       </section>
 
@@ -101,7 +137,6 @@ function CommissionsPage() {
                 <th>Client</th>
                 <th>Booking ref</th>
                 <th>Sale value (AED)</th>
-                <th>Rate</th>
                 <th>Commission (AED)</th>
                 <th>Status</th>
                 <th></th>
@@ -117,7 +152,6 @@ function CommissionsPage() {
                   <td>{c.clientName}</td>
                   <td>{c.bookingRef}</td>
                   <td>{c.saleValueAed?.toLocaleString()}</td>
-                  <td>{c.rate}</td>
                   <td className="amount">{c.commissionAed?.toLocaleString()}</td>
                   <td>
                     <span className={`status ${c.status}`}>{c.statusLabel ?? c.status}</span>
@@ -129,7 +163,7 @@ function CommissionsPage() {
                       </Link>
                     )}
                     {c.status === 'approved' && (
-                      <button className="row-cta" onClick={() => setInvoiceLine(c)}>
+                      <button className="row-cta" onClick={() => openInvoice(c)}>
                         Submit invoice
                       </button>
                     )}
@@ -143,14 +177,16 @@ function CommissionsPage() {
               ))}
               {filteredRows.length === 0 && (
                 <tr className="empty-row">
-                  <td colSpan={8}>No commission lines yet.</td>
+                  <td colSpan={7}>No commission lines yet.</td>
                 </tr>
               )}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={5}>Total</td>
-                <td className="amount">{summary?.earnedYtd ?? 'AED 0'}</td>
+                <td colSpan={4}>Total</td>
+                <td className="amount">
+                  AED {filteredRows.reduce((sum, r) => sum + (r.commissionAed ?? 0), 0).toLocaleString()}
+                </td>
                 <td colSpan={2}></td>
               </tr>
             </tfoot>
@@ -184,7 +220,7 @@ function CommissionsPage() {
         <div className="overlay" role="dialog" aria-modal="true" aria-label="Commission statement" onClick={(e) => e.target === e.currentTarget && setStatementOpen(false)}>
           <div className="stmt">
             <div className="stmt-top">
-              <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+              <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
               <div className="stmt-meta">
                 <p className="eyebrow">Commission statement</p>
                 <p>
@@ -226,16 +262,16 @@ function CommissionsPage() {
             </table>
             <div className="stmt-totals">
               <div className="row">
-                <span>Paid to date</span>
-                <b>{summary?.paidOut ?? 'AED 0'}</b>
+                <span>Commission approval in process</span>
+                <b>{summary?.commissionApprovalInProcess ?? 'AED 0'}</b>
               </div>
               <div className="row">
-                <span>Pending</span>
-                <b>{summary?.pending ?? 'AED 0'}</b>
+                <span>Commission Processed</span>
+                <b>{summary?.commissionProcessed ?? 'AED 0'}</b>
               </div>
               <div className="row total">
-                <span>Total earned</span>
-                <span>{summary?.earnedYtd ?? 'AED 0'}</span>
+                <span>Pending</span>
+                <span>{summary?.pending ?? 'AED 0'}</span>
               </div>
             </div>
             <p className="stmt-note">
@@ -258,7 +294,7 @@ function CommissionsPage() {
         <div className="overlay" role="dialog" aria-modal="true" aria-label="Payout receipt" onClick={(e) => e.target === e.currentTarget && setReceipt(null)}>
           <div className="stmt" style={{ maxWidth: 520 }}>
             <div className="stmt-top">
-              <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+              <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
               <div className="stmt-meta">
                 <p className="eyebrow">Payout receipt</p>
               </div>
@@ -315,6 +351,8 @@ function CommissionsPage() {
               <>
                 <label>Invoice number</label>
                 <input type="text" placeholder="e.g. INV-2026-031" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} style={{ marginBottom: 16 }} />
+                <label>Invoice date</label>
+                <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} style={{ marginBottom: 16 }} />
                 <div
                   style={{
                     display: 'flex',
@@ -348,8 +386,8 @@ function CommissionsPage() {
                   />
                 </div>
                 <div className="stmt-actions">
-                  <button className="btn" type="button" onClick={handleSubmitInvoice}>
-                    Submit invoice
+                  <button className="btn" type="button" onClick={handleSubmitInvoice} disabled={isSubmittingInvoice}>
+                    {isSubmittingInvoice ? 'Submitting…' : 'Submit invoice'}
                   </button>
                   <button className="btn ghost" type="button" onClick={closeInvoice}>
                     Close
@@ -376,7 +414,7 @@ function CommissionsPage() {
         <div className="overlay" role="dialog" aria-modal="true" aria-label="Commission policy and agency agreement" onClick={(e) => e.target === e.currentTarget && setPolicyOpen(false)}>
           <div className="stmt">
             <div className="stmt-top">
-              <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+              <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
               <div className="stmt-meta">
                 <p className="eyebrow">Commission policy &amp; agency agreement</p>
                 <p>

@@ -1,121 +1,94 @@
 import { useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { useGetLeadsPipelineQuery, useGetLeadsQuery, useCreateLeadMutation, useUpdateLeadStatusMutation } from '../features/leads/leadsApi'
-import { useGetProjectsQuery } from '../features/projects/projectsApi'
-import { useGetFormOptionsQuery } from '../features/lookups/lookupsApi'
-import ConfirmDialog from '../components/ConfirmDialog'
-import ProjectOptions from '../components/ProjectOptions'
+import { useSearchParams } from 'react-router-dom'
+import { useGetLeadsQuery, useCreateLeadMutation } from '../features/leads/leadsApi'
+// Commented out for future use, along with the pipeline summary and status filter/search
+// bar below — hidden on the leads screen for now.
+// import { useGetLeadsPipelineQuery } from '../features/leads/leadsApi'
+// Commented out for future use, along with the "Project of interest" field below.
+// import { useGetProjectsQuery } from '../features/projects/projectsApi'
+// import ProjectOptions from '../components/ProjectOptions'
+import { useGetNationalityListQuery } from '../features/lookups/lookupsApi'
 import { useToast } from '../components/useToast'
 
-const PIPELINE_SLOTS = [
-  { key: 'new', label: 'New' },
-  { key: 'contacted', label: 'Contacted' },
-  { key: 'visit', label: 'Site visit' },
-  { key: 'negotiation', label: 'Negotiation' },
-  { key: 'won', label: 'Won (YTD)' },
-]
+// Commented out for future use — the pipeline summary and status filter/search bar are
+// hidden on the leads screen for now.
+// const PIPELINE_SLOTS = [
+//   { key: 'new', label: 'New' },
+//   { key: 'contacted', label: 'Contacted' },
+//   { key: 'visit', label: 'Site visit' },
+//   { key: 'negotiation', label: 'Negotiation' },
+//   { key: 'won', label: 'Won (YTD)' },
+// ]
 
-const STATUS_FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'new', label: 'New' },
-  { key: 'contacted', label: 'Contacted' },
-  { key: 'visit', label: 'Site visit' },
-  { key: 'negotiation', label: 'Negotiation' },
-  { key: 'won', label: 'Won' },
-  { key: 'lost', label: 'Lost' },
-]
-
-const CONFIRM_CONFIG = {
-  contacted: {
-    title: 'Mark as contacted',
-    body: 'Logs your first contact with this client and moves the lead to "Contacted". Keeping activity up to date protects your lead through its 60-day window.',
-    cta: 'Mark contacted',
-    done: 'Done — the lead is now marked Contacted. Next step: book a site visit.',
-    status: 'contacted',
-  },
-  visit: {
-    title: 'Book a site visit',
-    body: 'Sends your client an invitation for the Mina sales centre and notifies the sales team to prepare the units of interest.',
-    cta: 'Send invitation',
-    done: "Invitation sent — you'll be notified once your client confirms a slot.",
-    status: 'visit',
-  },
-  outcome: {
-    title: 'Record site-visit outcome',
-    body: 'Capture how the visit went. Positive outcomes move the lead to "Negotiation".',
-    cta: 'Move to negotiation',
-    done: 'Moved to Negotiation. Next step: reserve the unit from Bookings.',
-    status: 'negotiation',
-  },
-  reopen: {
-    title: 'Re-open this lead?',
-    body: 'Returns the lead to "Contacted" so you can pick the conversation back up.',
-    cta: 'Re-open lead',
-    done: 'Lead re-opened and back in your pipeline as Contacted.',
-    status: 'contacted',
-  },
-}
+// const STATUS_FILTERS = [
+//   { key: 'all', label: 'All' },
+//   { key: 'new', label: 'New' },
+//   { key: 'contacted', label: 'Contacted' },
+//   { key: 'visit', label: 'Site visit' },
+//   { key: 'negotiation', label: 'Negotiation' },
+//   { key: 'won', label: 'Won' },
+//   { key: 'lost', label: 'Lost' },
+// ]
 
 const EMPTY_FORM = {
   salutation: '',
   fullName: '',
-  mobile: '',
-  email: '',
-  passport: '',
-  project: '',
-  budget: '',
   nationality: '',
-  residence: '',
-  language: '',
+  passport: '',
+  email: '',
+  mobile: '',
   address: '',
+  residence: '',
   passportFile: null,
-  notes: '',
+  // Commented out for future use — not part of the current simplified registration form.
+  // project: '',
+  // budget: '',
+  // language: '',
+  // notes: '',
 }
 
 function LeadsPage() {
   const [searchParams] = useSearchParams()
-  const { data: pipeline } = useGetLeadsPipelineQuery()
+  // const { data: pipeline } = useGetLeadsPipelineQuery() // for future use — pipeline summary
   const { data: leads } = useGetLeadsQuery()
-  const { data: projects } = useGetProjectsQuery()
-  const { data: options } = useGetFormOptionsQuery()
+  // const { data: projects } = useGetProjectsQuery() // for future use — "Project of interest" field
+  // Real, already-live endpoint — reused for both Nationality and Country of residence,
+  // same as the main registration wizard's Nationality/Office Country/Trade License Country
+  // dropdowns all sharing one nationality list.
+  const { data: nationalities = [] } = useGetNationalityListQuery()
   const [createLead, { isLoading: isSubmitting }] = useCreateLeadMutation()
-  const [updateLeadStatus] = useUpdateLeadStatusMutation()
   const { toastNode, showError, showSuccess } = useToast()
 
-  const projectList = projects ?? []
-  const budgetRanges = options?.budgetRanges ?? []
-  const nationalities = options?.nationalities ?? []
-  const countries = options?.countries ?? []
-  const languages = options?.languages ?? []
+  // const projectList = projects ?? [] // for future use
+  // const budgetRanges = options?.budgetRanges ?? [] // for future use
+  const countries = nationalities
+  // const languages = options?.languages ?? [] // for future use
 
   const [panelOpen, setPanelOpen] = useState(searchParams.get('register') === '1')
   const [form, setForm] = useState(EMPTY_FORM)
   const [submitted, setSubmitted] = useState(null)
   const [formError, setFormError] = useState(0)
 
-  const [statusFilter, setStatusFilter] = useState('all')
+  // Status filter chips stay commented out below — there's no status field in the leads
+  // response (clientName/nationality/passportNo/mobile/email/leadId only) to back them.
   const [query, setQuery] = useState('')
 
-  const [confirmType, setConfirmType] = useState(null)
-  const [confirmLeadId, setConfirmLeadId] = useState(null)
-  const [confirmDone, setConfirmDone] = useState(null)
-
   const rows = leads ?? []
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((r) => {
-        const okStatus = statusFilter === 'all' || r.status === statusFilter
-        const okQ = !query || `${r.clientName} ${r.projectInterest}`.toLowerCase().includes(query.toLowerCase())
-        return okStatus && okQ
-      }),
-    [rows, statusFilter, query]
-  )
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter((lead) =>
+      [lead.clientName, lead.nationality, lead.passportNo, lead.mobile, lead.email, lead.leadId].some((v) =>
+        String(v ?? '').toLowerCase().includes(q)
+      )
+    )
+  }, [rows, query])
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value })
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    const required = ['fullName', 'mobile', 'email', 'passport', 'project']
+    const required = ['fullName', 'mobile', 'email', 'passport']
     const missing = required.some((f) => !form[f].trim())
     if (missing) {
       setFormError((n) => n + 1)
@@ -135,26 +108,6 @@ function LeadsPage() {
     setForm(EMPTY_FORM)
     setSubmitted(null)
     setFormError(0)
-  }
-
-  const openConfirm = (type, leadId) => {
-    setConfirmType(type)
-    setConfirmLeadId(leadId)
-    setConfirmDone(null)
-  }
-  const closeConfirm = () => {
-    setConfirmType(null)
-    setConfirmLeadId(null)
-    setConfirmDone(null)
-  }
-  const runConfirm = async () => {
-    const cfg = CONFIRM_CONFIG[confirmType]
-    try {
-      await updateLeadStatus({ id: confirmLeadId, status: cfg.status }).unwrap()
-    } catch {
-      /* backend not ready yet */
-    }
-    setConfirmDone(cfg.done)
   }
 
   return (
@@ -183,46 +136,20 @@ function LeadsPage() {
                   <div>
                     <label>Salutation</label>
                     <select value={form.salutation} onChange={set('salutation')}>
-                      <option value="">Select</option>
-                      <option>Mr.</option>
-                      <option>Mrs.</option>
-                      <option>Ms.</option>
-                      <option>Dr.</option>
+                      <option value="0">-</option>
+                      <option value="M/S.">M/S.</option>
+                      <option value="Miss.">Miss.</option>
+                      <option value="Mr & Mrs.">Mr & Mrs.</option>
+                      <option value="Mr.">Mr.</option>
+                      <option value="Mrs.">Mrs.</option>
+                      <option value="Ms.">Ms.</option>
+                      <option value="Sheikh">Sheikh</option>
+                      <option value="Sheikha">Sheikha</option>
                     </select>
                   </div>
                   <div className="span-2">
-                    <label>Full name — as on Emirates ID / passport *</label>
+                    <label>Full name provided on the Emirates ID *</label>
                     <input type="text" value={form.fullName} onChange={set('fullName')} required />
-                  </div>
-                  <div>
-                    <label>Mobile *</label>
-                    <input type="tel" placeholder="+971 5x xxx xxxx" value={form.mobile} onChange={set('mobile')} required />
-                  </div>
-                  <div>
-                    <label>Email *</label>
-                    <input type="email" placeholder="name@email.com" value={form.email} onChange={set('email')} required />
-                  </div>
-                  <div>
-                    <label>Passport number *</label>
-                    <input type="text" value={form.passport} onChange={set('passport')} required />
-                  </div>
-                  <div>
-                    <label>Project of interest *</label>
-                    <select value={form.project} onChange={set('project')} required>
-                      <option value="">Select project</option>
-                      <ProjectOptions projects={projectList} />
-                    </select>
-                  </div>
-                  <div>
-                    <label>Budget (AED)</label>
-                    <select value={form.budget} onChange={set('budget')}>
-                      <option value="">Select range</option>
-                      {budgetRanges.map((o) => (
-                        <option value={o.value} key={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                   <div>
                     <label>Nationality</label>
@@ -236,6 +163,22 @@ function LeadsPage() {
                     </select>
                   </div>
                   <div>
+                    <label>Passport number *</label>
+                    <input type="text" value={form.passport} onChange={set('passport')} required />
+                  </div>
+                  <div>
+                    <label>Email *</label>
+                    <input type="email" placeholder="name@email.com" value={form.email} onChange={set('email')} required />
+                  </div>
+                  <div>
+                    <label>Phone number *</label>
+                    <input type="tel" placeholder="+971 5x xxx xxxx" value={form.mobile} onChange={set('mobile')} required />
+                  </div>
+                  <div className="span-2">
+                    <label>Official address</label>
+                    <input type="text" placeholder="Street, city, country" value={form.address} onChange={set('address')} />
+                  </div>
+                  <div>
                     <label>Country of residence</label>
                     <select value={form.residence} onChange={set('residence')}>
                       <option value="">Select</option>
@@ -245,21 +188,6 @@ function LeadsPage() {
                         </option>
                       ))}
                     </select>
-                  </div>
-                  <div>
-                    <label>Language preference</label>
-                    <select value={form.language} onChange={set('language')}>
-                      <option value="">Select</option>
-                      {languages.map((o) => (
-                        <option value={o.value} key={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="span-3">
-                    <label>Official address</label>
-                    <input type="text" placeholder="Street, city, country" value={form.address} onChange={set('address')} />
                   </div>
                   <div className="span-3">
                     <label>Client passport copy</label>
@@ -282,10 +210,42 @@ function LeadsPage() {
                       />
                     </div>
                   </div>
+                  {/* Commented out for future use — not part of the current simplified registration form. */}
+                  {/*
+                  <div>
+                    <label>Project of interest *</label>
+                    <select value={form.project} onChange={set('project')} required>
+                      <option value="">Select project</option>
+                      <ProjectOptions projects={projectList} />
+                    </select>
+                  </div>
+                  <div>
+                    <label>Budget (AED)</label>
+                    <select value={form.budget} onChange={set('budget')}>
+                      <option value="">Select range</option>
+                      {budgetRanges.map((o) => (
+                        <option value={o.value} key={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label>Language preference</label>
+                    <select value={form.language} onChange={set('language')}>
+                      <option value="">Select</option>
+                      {languages.map((o) => (
+                        <option value={o.value} key={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="span-3">
                     <label>Notes</label>
                     <textarea placeholder="Preferences, timeline, unit type…" value={form.notes} onChange={set('notes')} />
                   </div>
+                  */}
                 </div>
                 <div className="panel-actions">
                   <button type="submit" className="btn" disabled={isSubmitting}>
@@ -296,7 +256,7 @@ function LeadsPage() {
                   </button>
                   {formError > 0 && (
                     <span className="form-msg show" role="alert" key={formError}>
-                      Please complete the required fields — name, mobile, email, passport number and project.
+                      Please complete the required fields — name, mobile, email and passport number.
                     </span>
                   )}
                 </div>
@@ -335,6 +295,8 @@ function LeadsPage() {
         </section>
       )}
 
+      {/* Commented out for future use — pipeline summary and status filter/search bar
+          hidden on the leads screen for now.
       <section className="pipeline" aria-label="Pipeline summary">
         {PIPELINE_SLOTS.map((slot) => (
           <div className="stage" key={slot.key}>
@@ -343,86 +305,54 @@ function LeadsPage() {
           </div>
         ))}
       </section>
+      */}
 
       <section className="card" aria-label="Leads">
         <div className="card-head">
           <h2>All leads</h2>
           <div className="filters" role="group" aria-label="Filter leads">
-            {STATUS_FILTERS.map((f) => (
-              <button key={f.key} className={`chip${statusFilter === f.key ? ' active' : ''}`} type="button" onClick={() => setStatusFilter(f.key)}>
-                {f.label}
-              </button>
-            ))}
-            <input type="search" placeholder="Search client or project…" aria-label="Search leads" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <input
+              type="search"
+              placeholder="Search name, passport, phone, email…"
+              aria-label="Search leads"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Contact</th>
-                <th>Project interest</th>
-                <th>Registered</th>
-                <th>Protection expiry</th>
-                <th>Status</th>
-                <th></th>
+                <th>Customer Name</th>
+                <th>Nationality</th>
+                <th>Passport No</th>
+                <th>Phone</th>
+                <th>Email</th>
+                <th>Lead ID</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((lead) => (
-                <tr key={lead.id}>
+                <tr key={lead.leadId ?? lead.id}>
                   <td>
                     <span className="nm">{lead.clientName}</span>
-                    <span className="sub">{lead.budget}</span>
                   </td>
-                  <td>
-                    <span className="sub">
-                      {lead.mobile}
-                      <br />
-                      {lead.email}
-                    </span>
-                  </td>
-                  <td>{lead.projectInterest}</td>
-                  <td>{lead.registeredOn}</td>
-                  <td>
-                    <span className={`expiry${lead.expiryWarn ? ' warn' : ''}`}>{lead.expiry}</span>
-                  </td>
-                  <td>
-                    <span className={`status ${lead.status}`}>{lead.statusLabel ?? lead.status}</span>
-                  </td>
-                  <td>
-                    {lead.status === 'new' && (
-                      <button className="row-cta" onClick={() => openConfirm('contacted', lead.id)}>
-                        Mark contacted
-                      </button>
-                    )}
-                    {lead.status === 'contacted' && (
-                      <button className="row-cta" onClick={() => openConfirm('visit', lead.id)}>
-                        Book site visit
-                      </button>
-                    )}
-                    {lead.status === 'visit' && (
-                      <button className="row-cta" onClick={() => openConfirm('outcome', lead.id)}>
-                        Record outcome
-                      </button>
-                    )}
-                    {lead.status === 'lost' && (
-                      <button className="row-cta" onClick={() => openConfirm('reopen', lead.id)}>
-                        Re-open lead
-                      </button>
-                    )}
-                    {lead.status === 'won' && (
-                      <Link className="row-cta" to="/bookings">
-                        View booking
-                      </Link>
-                    )}
-                  </td>
+                  <td>{lead.nationality}</td>
+                  <td>{lead.passportNo}</td>
+                  <td>{lead.mobile}</td>
+                  <td>{lead.email}</td>
+                  <td>{lead.leadId ?? lead.id}</td>
                 </tr>
               ))}
-              {filteredRows.length === 0 && (
+              {rows.length === 0 && (
                 <tr className="empty-row">
-                  <td colSpan={7}>No leads yet — register your first lead above.</td>
+                  <td colSpan={6}>No leads yet — register your first lead above.</td>
+                </tr>
+              )}
+              {rows.length > 0 && filteredRows.length === 0 && (
+                <tr className="empty-row">
+                  <td colSpan={6}>No leads match your search.</td>
                 </tr>
               )}
             </tbody>
@@ -430,15 +360,6 @@ function LeadsPage() {
         </div>
       </section>
 
-      <ConfirmDialog
-        open={!!confirmType}
-        title={confirmType ? CONFIRM_CONFIG[confirmType].title : ''}
-        body={confirmType ? CONFIRM_CONFIG[confirmType].body : ''}
-        ctaLabel={confirmType ? CONFIRM_CONFIG[confirmType].cta : ''}
-        done={confirmDone}
-        onConfirm={runConfirm}
-        onClose={closeConfirm}
-      />
       {toastNode}
     </>
   )

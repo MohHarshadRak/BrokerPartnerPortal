@@ -4,7 +4,7 @@ function Header() {
       <div className="container">
         <div className="headerContent">
           <a href="https://www.rakproperties.ae/">
-            <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+            <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
           </a>
           <h1>
             RAK Properties <br />

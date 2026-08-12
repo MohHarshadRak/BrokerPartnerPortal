@@ -1,39 +1,43 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSelector } from 'react-redux'
-import { useGetDashboardSummaryQuery, useGetInventoryFeedQuery } from '../features/dashboard/dashboardApi'
+import { useGetAnnouncementsQuery } from '../features/dashboard/dashboardApi'
 import { useGetProjectsQuery } from '../features/projects/projectsApi'
-import { useGetFormOptionsQuery } from '../features/lookups/lookupsApi'
+import { useGetUnitFilterLookupsQuery, useSearchAllUnitsQuery, useGetBookingsSummaryQuery } from '../features/bookings/bookingsApi'
+import { useGetLeadsQuery } from '../features/leads/leadsApi'
+import { useGetCommissionsSummaryQuery } from '../features/commissions/commissionsApi'
 import { useToast } from '../components/useToast'
 
-const KPI_SLOTS = [
-  { key: 'activeLeads', label: 'Active leads' },
-  { key: 'siteVisitsBooked', label: 'Site visits booked' },
-  { key: 'unitsReserved', label: 'Units reserved' },
-  { key: 'commissionYtd', label: 'Commission YTD' },
-]
+// Matches BookingsPage's own range — SalesAgentPerformence_Select's "Reserved" branch ignores
+// these dates entirely regardless, so this just needs to cover everything.
+const BOOKINGS_FROM_DATE = '2000-01-01'
+const bookingsToDate = () => new Date().toISOString().slice(0, 10)
 
-// Highlights the standout figure at the start of a delta (a count like "+3" or
-// an amount like "AED 82k"), matching the design's <strong> emphasis — deltas
-// that are just plain status text (e.g. "next: 12 Jun…") are left as-is.
-function renderDelta(deltaText) {
-  if (!deltaText) return null
-  const match = deltaText.match(/^(\+\d+|AED\s?[\d,.]+k?)(\s.*)?$/i)
-  if (!match) return deltaText
-  return (
-    <>
-      <strong>{match[1]}</strong>
-      {match[2] ?? ''}
-    </>
-  )
-}
+// Same static bands as ProjectsPage's Available-units size filter — Unit_Search has no size
+// parameter, so this is applied client-side against the already-fetched results below.
+const SIZE_OPTIONS = [
+  { value: '', label: 'Size — any' },
+  { value: '500', label: '500+' },
+  { value: '750', label: '750+' },
+  { value: '1000', label: '1,000+' },
+  { value: '1500', label: '1,500+' },
+  { value: '2000', label: '2,000+' },
+]
 
 function DashboardPage() {
   const user = useSelector((state) => state.auth.user)
-  const { data: summary } = useGetDashboardSummaryQuery()
-  const { data: inventory } = useGetInventoryFeedQuery()
+  const { data: announcementsData } = useGetAnnouncementsQuery()
   const { data: projects } = useGetProjectsQuery()
-  const { data: options } = useGetFormOptionsQuery()
+  // Performance summary KPIs — real endpoints already powering Leads/Bookings/Commissions,
+  // reused here rather than the dead /dashboard/summary placeholder. activeHolds/reserved come
+  // from SalesAgentPerformence_Select @Flag=1 (same as BookingsPage's own summary cards).
+  const { data: leads } = useGetLeadsQuery()
+  const { data: bookingsSummary } = useGetBookingsSummaryQuery({ fromDate: BOOKINGS_FROM_DATE, toDate: bookingsToDate() })
+  const { data: commissionsSummary } = useGetCommissionsSummaryQuery()
+  // Same real endpoints already powering the reservation wizard's Step 1 cross-project
+  // search (Unit_Search @Flag=3) — for-sale units only, excluding anything on hold by a
+  // different broker.
+  const { data: filterLookups } = useGetUnitFilterLookupsQuery()
   const { toastNode, showToast } = useToast()
 
   const [unitMode, setUnitMode] = useState(false)
@@ -43,25 +47,48 @@ function DashboardPage() {
   const [bedrooms, setBedrooms] = useState('')
   const [minSize, setMinSize] = useState('')
 
-  const rows = inventory ?? []
   const projectList = projects ?? []
-  const propertyTypes = options?.propertyTypes ?? []
-  const bedroomOptions = options?.bedroomOptions ?? []
-  const sizeOptions = options?.sizeOptions ?? []
-  const announcements = summary?.announcements ?? []
-  const kpiByKey = Object.fromEntries((summary?.kpis ?? []).map((k) => [k.key, k]))
+  const propertyTypes = filterLookups?.propertyTypes ?? []
+  const bedroomOptions = filterLookups?.bedrooms ?? []
+  const announcements = announcementsData ?? []
 
-  const filteredRows = useMemo(() => {
-    return rows.filter((row) => {
-      const okTab = unitMode
-        ? !unitQuery || row.unit?.toLowerCase().includes(unitQuery.toLowerCase())
-        : !project || row.project === project
-      const okType = !type || row.type === type
-      const okBr = !bedrooms || (bedrooms === '4' ? row.bedrooms >= 4 : row.bedrooms === Number(bedrooms))
-      const okSize = !minSize || row.sizeSqft >= Number(minSize)
-      return okTab && okType && okBr && okSize
-    })
-  }, [rows, unitMode, unitQuery, project, type, bedrooms, minSize])
+  // Filtering happens server-side — communityId is the selected project's precinct id (only
+  // meaningful in "By project" mode); search is the unit-number query (only meaningful in
+  // "Unit search" mode). No client-side re-filtering needed, so the query just re-fires
+  // whenever these change.
+  const { data: units } = useSearchAllUnitsQuery({
+    communityId: unitMode ? '' : project,
+    propertyType: type,
+    bedrooms,
+    search: unitMode ? unitQuery : '',
+  })
+
+  const projectByPrecintId = (id) => projectList.find((p) => String(p.id) === String(id))
+  const filteredRows = useMemo(
+    () =>
+      (units ?? [])
+        .map((u) => {
+          const proj = projectByPrecintId(u.precintId)
+          return {
+            id: u.unitId,
+            unitId: u.unitId,
+            project: proj?.name ?? u.propertyName ?? '',
+            unit: u.unitNo,
+            location: proj?.location ?? '',
+            type: u.model,
+            bedrooms: u.bedrooms,
+            sizeSqft: u.buildAreaSqft ?? u.totalAreaSqft,
+            priceAed: u.sellingPriceAed,
+            status: u.status,
+            statusLabel: u.statusLabel,
+          }
+        })
+        // Unit_Search has no size parameter — applied client-side against the already-fetched
+        // page of results, unlike the other filters above which are sent to the server.
+        .filter((row) => !minSize || row.sizeSqft >= Number(minSize)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [units, projectList, minSize]
+  )
 
   const today = new Date().toLocaleDateString('en-GB', {
     weekday: 'long',
@@ -88,16 +115,22 @@ function DashboardPage() {
       </div>
 
       <section className="kpis" aria-label="Performance summary">
-        {KPI_SLOTS.map((slot) => {
-          const kpi = kpiByKey[slot.key]
-          return (
-            <div className="kpi" key={slot.key}>
-              <p className="label">{slot.label}</p>
-              <p className="value">{kpi?.value ?? '—'}</p>
-              <p className="delta">{renderDelta(kpi?.delta)}</p>
-            </div>
-          )
-        })}
+        <div className="kpi">
+          <p className="label">Active leads</p>
+          <p className="value">{leads?.length ?? 0}</p>
+        </div>
+        <div className="kpi">
+          <p className="label">Active hold units</p>
+          <p className="value">{bookingsSummary?.activeHolds ?? 0}</p>
+        </div>
+        <div className="kpi">
+          <p className="label">Units reserved</p>
+          <p className="value">{bookingsSummary?.reserved ?? 0}</p>
+        </div>
+        <div className="kpi">
+          <p className="label">Commission YTD</p>
+          <p className="value">{commissionsSummary?.earnedYtd ?? 'AED 0'}</p>
+        </div>
       </section>
 
       <div className="cols">
@@ -130,7 +163,7 @@ function DashboardPage() {
               <select aria-label="Select project" value={project} onChange={(e) => setProject(e.target.value)}>
                 <option value="">All projects — both masterplans</option>
                 {projectList.map((p) => (
-                  <option value={p.name} key={p.id}>
+                  <option value={p.id} key={p.id}>
                     {p.name}
                   </option>
                 ))}
@@ -161,8 +194,7 @@ function DashboardPage() {
               ))}
             </select>
             <select aria-label="Minimum size" value={minSize} onChange={(e) => setMinSize(e.target.value)}>
-              <option value="">Size — any</option>
-              {sizeOptions.map((o) => (
+              {SIZE_OPTIONS.map((o) => (
                 <option value={o.value} key={o.value}>
                   {o.label}
                 </option>
@@ -179,7 +211,7 @@ function DashboardPage() {
                   <th>Size (sq ft)</th>
                   <th>Price (AED)</th>
                   <th>Status</th>
-                  <th></th>
+                  <th className="inv-action"></th>
                 </tr>
               </thead>
               <tbody>
@@ -191,12 +223,12 @@ function DashboardPage() {
                     </td>
                     <td>{row.type}</td>
                     <td>{row.bedrooms === 0 ? 'Studio' : `${row.bedrooms}BR`}</td>
-                    <td>{row.sizeSqft}</td>
+                    <td>{row.sizeSqft?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                     <td>{row.priceAed?.toLocaleString()}</td>
                     <td>
                       <span className={`status ${row.status}`}>{row.statusLabel ?? row.status}</span>
                     </td>
-                    <td>
+                    <td className="inv-action">
                       {row.status === 'hold' ? (
                         <a
                           className="row-cta"
@@ -209,7 +241,7 @@ function DashboardPage() {
                           Join waitlist
                         </a>
                       ) : (
-                        <Link className="row-cta" to="/bookings?new=1">
+                        <Link className="row-cta" to={`/bookings?new=1&unitId=${row.unitId}`}>
                           Reserve
                         </Link>
                       )}
@@ -236,10 +268,11 @@ function DashboardPage() {
             </div>
             <div className="announce">
               {announcements.length === 0 && <p style={{ color: 'var(--rak-navy-60)', fontSize: 13 }}>No announcements yet.</p>}
-              {announcements.map((a, i) => (
-                <article key={i}>
+              {announcements.map((a) => (
+                <article key={a.id}>
                   <time>{a.date}</time>
-                  <p>{a.text}</p>
+                  <p style={{ fontFamily: 'var(--font-medium)' }}>{a.title}</p>
+                  <p dangerouslySetInnerHTML={{ __html: a.description }} />
                 </article>
               ))}
             </div>

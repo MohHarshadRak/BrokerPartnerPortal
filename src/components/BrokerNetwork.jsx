@@ -122,7 +122,7 @@ function BrokerNetwork() {
                     Authenticate.aspx auto-logs in a matched identity, or shows its
                     registration wizard for one it doesn't recognize yet. */}
                 <a href={`${import.meta.env.VITE_API_BASE_URL}/Broker/uaepass-login`} className="uaePassBtn">
-                  <img src="/assets/img/fingerprint.svg" alt="fingerprint" />
+                  <img src={`${import.meta.env.BASE_URL}assets/img/fingerprint.svg`} alt="fingerprint" />
                   SIGN UP WITH UAE PASS
                 </a>
                 {/* Freelancers register directly, no UAE Pass — same as the old app's
@@ -175,7 +175,7 @@ function BrokerNetwork() {
                 </div>
 
                 <a href={`${import.meta.env.VITE_API_BASE_URL}/Broker/uaepass-login`} className="uaePassBtn">
-                  <img src="/assets/img/fingerprint.svg" alt="fingerprint" />
+                  <img src={`${import.meta.env.BASE_URL}assets/img/fingerprint.svg`} alt="fingerprint" />
                   LOG IN WITH UAE PASS
                 </a>
                 {/* Freelancers register directly, no UAE Pass — same as the old app's

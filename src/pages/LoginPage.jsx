@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
 import '../styles/portal.css'
 import '../styles/signin.css'
-import { useLoginMutation } from '../features/auth/authApi'
+import { useLoginMutation, useForgotPasswordMutation } from '../features/auth/authApi'
 import { setCredentials, logout } from '../features/auth/authSlice'
 import { useToast } from '../components/useToast'
 // TEMPORARY — remove this import and the bypass block in handleSubmit once the real login API is ready.
@@ -30,8 +30,10 @@ function LoginPage() {
   const [forgotOpen, setForgotOpen] = useState(false)
   const [forgotId, setForgotId] = useState('')
   const [forgotSent, setForgotSent] = useState(false)
+  const [forgotError, setForgotError] = useState('')
 
   const [login, { isLoading }] = useLoginMutation()
+  const [forgotPassword, { isLoading: sendingForgotLink }] = useForgotPasswordMutation()
 
   // If the legacy app's logout sent the browser back here (?loggedOut=1), any
   // token from an earlier SSO handoff is stale — clear it so a stray token in
@@ -42,7 +44,12 @@ function LoginPage() {
     if (params.get('loggedOut') === '1') {
       dispatch(logout())
     }
-  }, [dispatch])
+    // Registration "resume" emails link back to this bare root (see PortalSettings:SignInUrl
+    // on the API) — forward bid/seccode straight into the registration wizard.
+    if (params.get('bid') && params.get('seccode')) {
+      navigate(`/register?${params.toString()}`, { replace: true })
+    }
+  }, [dispatch, navigate])
 
   const goToDashboard = (message) => {
     showSuccess(message)
@@ -53,14 +60,22 @@ function LoginPage() {
     e.preventDefault()
     setForgotOpen((open) => !open)
     setForgotSent(false)
+    setForgotError('')
   }
 
   useEffect(() => {
     if (forgotOpen) forgotInputRef.current?.focus()
   }, [forgotOpen])
 
-  const sendForgotLink = () => {
-    if (forgotId.trim()) setForgotSent(true)
+  const sendForgotLink = async () => {
+    if (!forgotId.trim()) return
+    setForgotError('')
+    try {
+      await forgotPassword(forgotId.trim()).unwrap()
+      setForgotSent(true)
+    } catch (err) {
+      setForgotError(err?.data?.message || 'We could not send a reset link. Please try again.')
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -107,7 +122,7 @@ function LoginPage() {
         <main className="panel-form">
           <div className="logo">
             <a href="https://www.rakproperties.ae/" aria-label="RAK Properties">
-              <img src="/assets/img/rak_logo.svg" alt="RAK Properties" />
+              <img src={`${import.meta.env.BASE_URL}assets/img/rak_logo.svg`} alt="RAK Properties" />
             </a>
           </div>
 
@@ -171,22 +186,24 @@ function LoginPage() {
             </div>
 
             <div className={`forgot-box${forgotOpen ? ' show' : ''}`}>
-              <p>Enter your username or registered email and we&rsquo;ll send you a reset link.</p>
+              <p>Enter your registered email and we&rsquo;ll send you a reset link.</p>
               <div className="forgot-row">
                 <input
-                  type="text"
-                  placeholder="Username or email"
-                  aria-label="Username or email"
+                  type="email"
+                  placeholder="Registered email"
+                  aria-label="Registered email"
                   ref={forgotInputRef}
                   value={forgotId}
                   onChange={(e) => setForgotId(e.target.value)}
+                  disabled={sendingForgotLink}
                 />
-                <button type="button" className="btn-small" onClick={sendForgotLink}>
-                  Send link
+                <button type="button" className="btn-small" onClick={sendForgotLink} disabled={sendingForgotLink}>
+                  {sendingForgotLink ? 'Sending…' : 'Send link'}
                 </button>
               </div>
+              {forgotError && <p className="forgot-error show">{forgotError}</p>}
               <p className={`forgot-ok${forgotSent ? ' show' : ''}`}>
-                &#10003; If the account exists, a reset link is on its way to the registered email.
+                &#10003; A password reset link is on its way to your email.
               </p>
             </div>
 
@@ -222,6 +239,11 @@ function LoginPage() {
             <Link className="reg-card" to="/register?type=agency">
               <span className="t">Licensed Agency</span>
               <span className="d">Agents holding a valid trade license for brokerage.</span>
+              <span className="go">Register &rarr;</span>
+            </Link>
+            <Link className="reg-card" to="/register?type=lease">
+              <span className="t">Leasing Broker</span>
+              <span className="d">Brokerage companies registering to transact RAK Properties leases.</span>
               <span className="go">Register &rarr;</span>
             </Link>
           </div>

@@ -1,92 +1,142 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   useGetBookingsSummaryQuery,
   useGetBookingsQuery,
-  useCreateBookingMutation,
-  useUpdateBookingStatusMutation,
+  useReleaseUnitHoldMutation,
+  useConvertHoldToEoiMutation,
+  useDownloadReservationFormMutation,
 } from '../features/bookings/bookingsApi'
-import { useGetProjectsQuery } from '../features/projects/projectsApi'
-import { useGetLeadsQuery } from '../features/leads/leadsApi'
-import { useGetFormOptionsQuery } from '../features/lookups/lookupsApi'
 import ConfirmDialog from '../components/ConfirmDialog'
-import ProjectOptions from '../components/ProjectOptions'
+import ReservationWizard from '../components/ReservationWizard'
+import Countdown from '../components/Countdown'
 import { useToast } from '../components/useToast'
 
+// Sending the EOI payment link moves a row from 'hold' to its own 'eoi' status; paying it
+// moves to 'eoiPaid'. Neither changes the underlying 48-hour hold clock.
 const STATUS_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'hold', label: 'On hold' },
   { key: 'eoi', label: 'EOI' },
+  { key: 'eoiPaid', label: 'EOI Paid' },
   { key: 'reserved', label: 'Reserved' },
   { key: 'spa', label: 'SPA signed' },
   { key: 'done', label: 'Completed' },
   { key: 'cancelled', label: 'Cancelled' },
 ]
 
+// "View details" timeline — a fixed 5-stage progression a booking moves through. Purely
+// derived from the row's own status (no separate per-booking timeline data exists), so a row
+// always shows every stage up to and including its current one as "done"/"now", the rest
+// upcoming. 'eoi' and 'eoiPaid' both highlight the same "EOI" stage (sent vs paid are
+// sub-states of one milestone) — paying the EOI doesn't create a real reservation (the same
+// 48-hour hold still applies), so it's not the same stage as 'reserved'.
+const TIMELINE_STEPS = ['Hold', 'EOI', 'Reserve', 'SPA signed', 'Handover']
+const STATUS_STEP_INDEX = { hold: 0, eoi: 1, eoiPaid: 1, reserved: 2, spa: 3, done: 4 }
+const bookingTimeline = (status) => {
+  const currentIndex = STATUS_STEP_INDEX[status]
+  if (currentIndex === undefined) return []
+  return TIMELINE_STEPS.map((label, i) => ({
+    label,
+    state: i < currentIndex ? 'done' : i === currentIndex ? 'now' : '',
+  }))
+}
+
+// "Next step" copy under the timeline — same source data as bookingTimeline (unitLabel/
+// clientName/bookedOn already on the row), no new backend fields. Only hold/eoi/eoiPaid/
+// reserved have a defined message; other statuses fall back to the generic "No update yet."
+// below.
+const firstName = (name) => name?.trim().split(/\s+/)[0] ?? ''
+const NEXT_STEP_TEXT = {
+  hold: (b) =>
+    `Convert to EOI to collect the AED 50,000 payment before the 48-hour hold expires — otherwise ${b.unitLabel} returns to open inventory automatically.`,
+  eoi: (b) =>
+    `EOI payment link sent to ${firstName(b.clientName)} — they have until the 48-hour hold expires to pay, or ${b.unitLabel} returns to open inventory automatically.`,
+  eoiPaid: (b) => `EOI received from ${firstName(b.clientName)} — proceed to formalize the reservation and payment plan.`,
+  reserved: (b) =>
+    `The SPA is being prepared by sales administration — ${firstName(b.clientName)} will be offered a signing appointment within 5 working days.`,
+}
+const nextStepText = (b) => NEXT_STEP_TEXT[b.status]?.(b) ?? null
+
 const CONFIRM_CONFIG = {
   eoi: {
     title: 'Convert hold to EOI',
-    body: 'This sends your client a payment request for the AED 50,000 EOI. The unit stays secured beyond the 48-hour hold.',
+    body: 'This emails your client a payment link for the AED 50,000 EOI. They have until the original 48-hour hold expires to pay — it does not extend the hold.',
     cta: 'Send payment request',
-    done: "Payment request sent — we'll notify you the moment the EOI is received.",
-    status: 'eoi',
+    done: 'Payment request sent to your client by email.',
   },
   release: {
     title: 'Release this unit?',
     body: "The unit returns to open inventory immediately and your client's hold ends. This can't be undone.",
     cta: 'Release unit',
     done: 'Unit released — back in open inventory.',
-    status: 'cancelled',
   },
 }
 
-const EMPTY_FORM = {
-  project: '',
-  unit: '',
-  leadId: '',
-  paymentPlan: '',
-  paymentMethod: '',
-  jointBuyer: false,
-  jointName: '',
-  jointPassport: '',
-  jointMobile: '',
-  idFile: null,
-  notes: '',
-}
-
-function Countdown({ expiresAt }) {
-  const [remaining, setRemaining] = useState(Math.max(0, expiresAt - Date.now()))
-  useEffect(() => {
-    const id = setInterval(() => setRemaining(Math.max(0, expiresAt - Date.now())), 1000)
-    return () => clearInterval(id)
-  }, [expiresAt])
-  const s = Math.floor(remaining / 1000)
-  const h = String(Math.floor(s / 3600)).padStart(2, '0')
-  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
-  const sec = String(s % 60).padStart(2, '0')
-  return <span className="countdown">{h}:{m}:{sec}</span>
-}
+// SalesAgentPerformence_Select requires @SDate/@EDate, but the page has no date-range picker
+// — this fixed wide range effectively returns full history without exposing any UI for it.
+// (Its "Reserved" branch ignores these dates entirely regardless — the procedure's own
+// behavior, not something this range controls.)
+const BOOKINGS_FROM_DATE = '2000-01-01'
+const bookingsToDate = () => new Date().toISOString().slice(0, 10)
 
 function BookingsPage() {
-  const [searchParams] = useSearchParams()
-  const { data: summary } = useGetBookingsSummaryQuery()
-  const { data: bookings } = useGetBookingsQuery()
-  const { data: projects } = useGetProjectsQuery()
-  const { data: leads } = useGetLeadsQuery()
-  const { data: options } = useGetFormOptionsQuery()
-  const [createBooking, { isLoading: isSubmitting }] = useCreateBookingMutation()
-  const [updateBookingStatus] = useUpdateBookingStatusMutation()
-  const { toastNode, showToast, showError, showSuccess } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { data: summary } = useGetBookingsSummaryQuery({ fromDate: BOOKINGS_FROM_DATE, toDate: bookingsToDate() })
+  const { data: bookings } = useGetBookingsQuery({ fromDate: BOOKINGS_FROM_DATE, toDate: bookingsToDate() })
+  const [releaseUnitHold] = useReleaseUnitHoldMutation()
+  const [convertHoldToEoi] = useConvertHoldToEoiMutation()
+  const [downloadReservationForm] = useDownloadReservationFormMutation()
+  const { toastNode, showToast, showError } = useToast()
 
-  const projectList = projects ?? []
-  const leadList = leads ?? []
-  const paymentPlans = options?.paymentPlans ?? []
-  const paymentMethods = options?.paymentMethods ?? []
+  // "Download reservation form" for a 'reserved' row — real endpoint
+  // (ReservationbyLead.Attachement). Same blob-to-download-link pattern as ProjectsPage's
+  // marketing-kit download.
+  const handleDownloadReservationForm = async (reserveId, unitLabel) => {
+    try {
+      const blob = await downloadReservationForm(reserveId).unwrap()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${unitLabel || 'reservation-form'}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      showError(err?.data?.message || 'We could not download the reservation form. Please try again.')
+    }
+  }
 
   const [panelOpen, setPanelOpen] = useState(searchParams.get('new') === '1')
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [submitted, setSubmitted] = useState(null)
-  const [formError, setFormError] = useState(0)
+  // Set when arriving from the Projects page's "Reserve" link — the unit is already known,
+  // so the wizard should skip Step 1's search and land straight on Step 2.
+  const initialUnitId = searchParams.get('unitId') || undefined
+
+  // "Convert to Reserve" on an EOI-paid hold — both the unit and its client are already known,
+  // so the wizard resumes straight at Step 3 (Payment Plan) instead of the URL-param path
+  // above, since this action starts from a click already on this page, not a fresh navigation.
+  const [reserveUnitId, setReserveUnitId] = useState(null)
+  const [reserveLeadId, setReserveLeadId] = useState(null)
+  const handleConvertToReserve = (unitId, leadId) => {
+    setReserveUnitId(unitId)
+    setReserveLeadId(leadId)
+    setPanelOpen(true)
+  }
+  const closeWizard = () => {
+    setPanelOpen(false)
+    setReserveUnitId(null)
+    setReserveLeadId(null)
+    // Otherwise a deep-link's ?unitId=/&new=1 (Dashboard/Projects "Reserve" link) lingers in
+    // the URL after Cancel — the NEXT "+ New reservation" click would still see them and jump
+    // straight back to Step 2 for the same unit instead of starting genuinely fresh.
+    if (searchParams.has('unitId') || searchParams.has('new')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('unitId')
+      next.delete('new')
+      setSearchParams(next, { replace: true })
+    }
+  }
 
   const [statusFilter, setStatusFilter] = useState('all')
   const [openDetailId, setOpenDetailId] = useState(null)
@@ -99,32 +149,6 @@ function BookingsPage() {
     () => rows.filter((r) => statusFilter === 'all' || r.status === statusFilter),
     [rows, statusFilter]
   )
-
-  const set = (field) => (e) => setForm({ ...form, [field]: e.target.value })
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    const required = ['project', 'unit', 'leadId', 'paymentPlan']
-    const missing = required.some((f) => !String(form[f]).trim())
-    if (missing) {
-      setFormError((n) => n + 1)
-      return
-    }
-    setFormError(0)
-    try {
-      const result = await createBooking(form).unwrap()
-      setSubmitted(result)
-      showSuccess('Reservation created successfully.')
-    } catch {
-      showError('Could not create this reservation — please try again.')
-    }
-  }
-
-  const resetForm = () => {
-    setForm(EMPTY_FORM)
-    setSubmitted(null)
-    setFormError(0)
-  }
 
   const openConfirm = (type, bookingId) => {
     setConfirmType(type)
@@ -139,9 +163,19 @@ function BookingsPage() {
   const runConfirm = async () => {
     const cfg = CONFIRM_CONFIG[confirmType]
     try {
-      await updateBookingStatus({ id: confirmBookingId, status: cfg.status }).unwrap()
-    } catch {
-      /* backend not ready yet */
+      if (confirmType === 'release') {
+        // Real endpoint (Unit_Hold_Release) — confirmBookingId is the unitId for a 'hold' row
+        // (see BookingsService.MapHoldRow), which is exactly what this needs.
+        await releaseUnitHold(confirmBookingId).unwrap()
+      } else if (confirmType === 'eoi') {
+        // Real endpoint — sends the held unit's client a payment link by email and flips the
+        // row to 'eoi' status. confirmBookingId is the unitId, same as for 'release'.
+        await convertHoldToEoi(confirmBookingId).unwrap()
+      }
+    } catch (err) {
+      showError(err?.data?.message || 'Something went wrong — please try again.')
+      closeConfirm()
+      return
     }
     setConfirmDone(cfg.done)
   }
@@ -154,359 +188,247 @@ function BookingsPage() {
           <h1>Bookings</h1>
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <button className="btn" type="button" onClick={() => setPanelOpen(true)}>
-            + New reservation
+          <button
+            className={panelOpen ? 'btn ghost' : 'btn'}
+            type="button"
+            onClick={() => (panelOpen ? closeWizard() : setPanelOpen(true))}
+          >
+            {panelOpen ? 'Cancel' : '+ New reservation'}
           </button>
         </div>
       </div>
 
-      {panelOpen && (
-        <section className="panel" aria-label="Create a reservation">
-          {!submitted ? (
-            <>
-              <h2>Create a reservation</h2>
-              <p className="note">
-                Reserve a unit for your client. Complete the reservation, including payment, within <b>20 minutes</b> — one
-                20-minute postponement is allowed. A land registration fee of AED 3,000 applies at reservation.
-              </p>
-              <form onSubmit={handleSubmit} noValidate>
-                <div className="fgrid">
+      {panelOpen ? (
+        <ReservationWizard
+          onClose={closeWizard}
+          initialUnitId={initialUnitId || reserveUnitId}
+          initialLeadId={reserveLeadId}
+        />
+      ) : (
+        <>
+          {summary?.activeHoldsList?.length > 0 && (
+            // Fixed max-height + scroll so this banner never grows the page with more holds —
+            // each hold gets its own row, same layout the single-hold version used.
+            <div
+              className="hold-alert"
+              role="alert"
+              style={{ flexDirection: 'column', alignItems: 'stretch', maxHeight: 220, overflowY: 'auto', gap: 12 }}
+            >
+              {summary.activeHoldsList.map((hold) => (
+                <div key={hold.unitId} style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <div>
-                    <label>Project *</label>
-                    <select value={form.project} onChange={set('project')} required>
-                      <option value="">Select project</option>
-                      <ProjectOptions projects={projectList} />
-                    </select>
+                    <p className="t">Active unit hold — {hold.unitLabel}</p>
+                    <p className="s">
+                      Hold placed {hold.placedAt} · {hold.clientName ? `Client: ${hold.clientName}` : 'No client attached yet'}
+                      {hold.isEoiPaid && (
+                        <>
+                          {' · '}
+                          <span style={{ color: '#2e5238', fontFamily: 'var(--font-medium)' }}>EOI Paid</span>
+                        </>
+                      )}
+                      {!hold.isEoiPaid && hold.isEoiSent && (
+                        <>
+                          {' · '}
+                          <span style={{ color: '#1d4568', fontFamily: 'var(--font-medium)' }}>EOI sent</span>
+                        </>
+                      )}
+                    </p>
                   </div>
-                  <div>
-                    <label>Unit *</label>
-                    <input type="text" placeholder="e.g. N-1204" value={form.unit} onChange={set('unit')} required />
-                  </div>
-                  <div>
-                    <label>Client (registered lead) *</label>
-                    <select value={form.leadId} onChange={set('leadId')} required>
-                      <option value="">Select lead</option>
-                      {leadList.map((lead) => (
-                        <option value={lead.id} key={lead.id}>
-                          {lead.clientName}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label>Payment plan *</label>
-                    <select value={form.paymentPlan} onChange={set('paymentPlan')} required>
-                      <option value="">Select plan</option>
-                      {paymentPlans.map((o) => (
-                        <option value={o.value} key={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label>Payment method</label>
-                    <select value={form.paymentMethod} onChange={set('paymentMethod')}>
-                      <option value="">Select</option>
-                      {paymentMethods.map((o) => (
-                        <option value={o.value} key={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label>Client ID / passport</label>
-                    <div className="upload">
-                      <span className="file-name">{form.idFile ? form.idFile.name : 'No file selected'}</span>
-                      <button
-                        type="button"
-                        className="btn-ghost-sm"
-                        onClick={() => document.getElementById('ResIdFile').click()}
-                      >
-                        Upload
-                      </button>
-                      <input
-                        type="file"
-                        id="ResIdFile"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        style={{ display: 'none' }}
-                        onChange={(e) => setForm({ ...form, idFile: e.target.files[0] ?? null })}
-                      />
-                    </div>
-                  </div>
-                  <div className="span-3" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      id="joint-toggle"
-                      style={{ width: 15, height: 15 }}
-                      checked={form.jointBuyer}
-                      onChange={(e) => setForm({ ...form, jointBuyer: e.target.checked })}
-                    />
-                    <label htmlFor="joint-toggle" style={{ margin: 0, cursor: 'pointer' }}>
-                      Add a joint buyer (optional)
-                    </label>
-                  </div>
-                  {form.jointBuyer && (
-                    <div className="span-3">
-                      <div className="fgrid">
-                        <div>
-                          <label>Joint buyer — full name</label>
-                          <input type="text" value={form.jointName} onChange={set('jointName')} />
-                        </div>
-                        <div>
-                          <label>Passport number</label>
-                          <input type="text" value={form.jointPassport} onChange={set('jointPassport')} />
-                        </div>
-                        <div>
-                          <label>Mobile</label>
-                          <input type="tel" value={form.jointMobile} onChange={set('jointMobile')} />
-                        </div>
-                      </div>
-                    </div>
+                  <Countdown expiresAt={hold.expiresAt} />
+                  {!hold.isEoiPaid && !hold.isEoiSent && (
+                    <button className="act" onClick={() => openConfirm('eoi', hold.unitId)}>
+                      Convert to EOI
+                    </button>
                   )}
-                  <div className="span-3">
-                    <label>Notes</label>
-                    <textarea placeholder="Plan discussed, client preferences…" value={form.notes} onChange={set('notes')} />
-                  </div>
-                </div>
-                <div className="panel-actions">
-                  <button type="submit" className="btn" disabled={isSubmitting}>
-                    {isSubmitting ? 'Reserving…' : 'Reserve unit'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    onClick={() => showToast('A PDF quotation will be prepared and emailed to you shortly.')}
-                  >
-                    Generate quotation
-                  </button>
-                  <button type="button" className="btn ghost" onClick={() => setPanelOpen(false)}>
-                    Cancel
-                  </button>
-                  {formError > 0 && (
-                    <span className="form-msg show" role="alert" key={formError}>
-                      Please complete the required fields — project, unit, client and payment plan.
-                    </span>
+                  {hold.isEoiPaid && hold.leadId && (
+                    <button className="act" onClick={() => handleConvertToReserve(hold.unitId, hold.leadId)}>
+                      Convert to Reserve
+                    </button>
                   )}
+                  <button className="act" onClick={() => openConfirm('release', hold.unitId)}>
+                    Release unit
+                  </button>
                 </div>
-              </form>
-            </>
-          ) : (
-            <div className="panel-ok">
-              <p className="eyebrow">Reservation placed</p>
-              <h3>The unit is held for your client</h3>
-              {submitted.bookingRef && (
-                <p className="ref">
-                  Booking reference <b>{submitted.bookingRef}</b> · Hold expires in <b>48 hours</b>
-                </p>
-              )}
-              <p className="copy">
-                Our sales team will confirm the reservation as soon as the payment is received. You can follow every milestone
-                in your bookings below.
-              </p>
-              <div className="panel-actions">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    resetForm()
-                    setPanelOpen(false)
-                  }}
-                >
-                  View my bookings
-                </button>
-              </div>
+              ))}
             </div>
           )}
-        </section>
-      )}
 
-      {summary?.activeHold && (
-        <div className="hold-alert" role="alert">
-          <div>
-            <p className="t">Active unit hold — {summary.activeHold.unitLabel}</p>
-            <p className="s">
-              Client: {summary.activeHold.clientName} · Hold placed {summary.activeHold.placedAt}
-            </p>
-          </div>
-          <Countdown expiresAt={summary.activeHold.expiresAt} />
-          <button className="act" onClick={() => openConfirm('eoi', summary.activeHold.bookingId)}>
-            Convert to EOI
-          </button>
-          <button className="act" onClick={() => openConfirm('release', summary.activeHold.bookingId)}>
-            Release unit
-          </button>
-        </div>
-      )}
+          <section className="kpis" aria-label="Bookings summary">
+            <div className="kpi">
+              <p className="label">Active holds</p>
+              <p className="value">{summary?.activeHolds ?? 0}</p>
+            </div>
+            <div className="kpi">
+              <p className="label">Reserved</p>
+              <p className="value">{summary?.reserved ?? 0}</p>
+            </div>
+            <div className="kpi">
+              <p className="label">SPA signed</p>
+              <p className="value">{summary?.spaSigned ?? 0}</p>
+            </div>
+            <div className="kpi">
+              <p className="label">Total sales value</p>
+              <p className="value">{summary?.totalSalesValue ?? 'AED 0'}</p>
+            </div>
+          </section>
 
-      <section className="kpis" aria-label="Bookings summary">
-        <div className="kpi">
-          <p className="label">Active holds</p>
-          <p className="value">{summary?.activeHolds ?? 0}</p>
-        </div>
-        <div className="kpi">
-          <p className="label">Reserved</p>
-          <p className="value">{summary?.reserved ?? 0}</p>
-        </div>
-        <div className="kpi">
-          <p className="label">SPA signed</p>
-          <p className="value">{summary?.spaSigned ?? 0}</p>
-        </div>
-        <div className="kpi">
-          <p className="label">Total sales value</p>
-          <p className="value">{summary?.totalSalesValue ?? 'AED 0'}</p>
-        </div>
-      </section>
-
-      <section className="card" aria-label="Bookings">
-        <div className="card-head">
-          <h2>All bookings</h2>
-          <div className="filters" role="group" aria-label="Filter bookings">
-            {STATUS_FILTERS.map((f) => (
-              <button key={f.key} className={`chip${statusFilter === f.key ? ' active' : ''}`} type="button" onClick={() => setStatusFilter(f.key)}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Ref</th>
-                <th>Unit</th>
-                <th>Client</th>
-                <th>Booked</th>
-                <th>Sale value (AED)</th>
-                <th>Payments</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRows.map((b) => (
-                <Fragment key={b.id}>
+          <section className="card" aria-label="Bookings">
+            <div className="card-head">
+              <h2>All bookings</h2>
+              <div className="filters" role="group" aria-label="Filter bookings">
+                {STATUS_FILTERS.map((f) => (
+                  <button key={f.key} className={`chip${statusFilter === f.key ? ' active' : ''}`} type="button" onClick={() => setStatusFilter(f.key)}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
                   <tr>
-                    <td>
-                      <span className="nm">{b.ref}</span>
-                    </td>
-                    <td>
-                      <span className="nm">{b.unitLabel}</span>
-                      <span className="sub">{b.unitLocation}</span>
-                    </td>
-                    <td>{b.clientName}</td>
-                    <td>{b.bookedOn}</td>
-                    <td>{b.saleValueAed?.toLocaleString()}</td>
-                    <td>
-                      <span className="pbar">
-                        <i style={{ width: `${b.paymentPct ?? 0}%` }}></i>
-                      </span>
-                      <span className="pbar-l">{b.paymentLabel}</span>
-                    </td>
-                    <td>
-                      <span className={`status ${b.status}`} title={b.statusHint}>
-                        {b.statusLabel ?? b.status}
-                      </span>
-                    </td>
-                    <td>
-                      {b.status === 'hold' && (
-                        <>
-                          <a
-                            className="row-cta"
-                            href="#"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              openConfirm('eoi', b.id)
-                            }}
-                          >
-                            Convert to EOI
-                          </a>
-                          <br />
-                        </>
-                      )}
-                      {b.status === 'spa' && (
-                        <>
-                          <Link className="row-cta" to="/commissions">
-                            View commission
-                          </Link>
-                          <br />
-                        </>
-                      )}
-                      {b.status === 'done' && (
-                        <Link className="row-cta" to="/commissions">
-                          View commission
-                        </Link>
-                      )}
-                      {['hold', 'eoi', 'reserved', 'spa'].includes(b.status) && (
-                        <button className="row-cta" onClick={() => setOpenDetailId(openDetailId === b.id ? null : b.id)}>
-                          {openDetailId === b.id ? 'Hide details' : 'View details'}
-                        </button>
-                      )}
-                    </td>
+                    <th>Ref</th>
+                    <th>Unit</th>
+                    <th>Client</th>
+                    <th>Booked</th>
+                    <th>Sale value (AED)</th>
+                    <th>Status</th>
+                    <th></th>
                   </tr>
-                  {openDetailId === b.id && ['hold', 'eoi', 'reserved', 'spa'].includes(b.status) && (
-                    <tr className="detail-row">
-                      <td colSpan={8}>
-                        <div className="timeline">
-                          {(b.timeline ?? []).map((step) => (
-                            <span className={`step${step.state ? ` ${step.state}` : ''}`} key={step.label}>
-                              {step.label}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="next-step">
-                          <b>Next step:</b> {b.nextStep ?? 'No update yet.'}
-                        </p>
-                        <div className="d-actions">
+                </thead>
+                <tbody>
+                  {filteredRows.map((b) => (
+                    <Fragment key={b.id}>
+                      <tr>
+                        <td>
+                          <span className="nm">{b.ref}</span>
+                        </td>
+                        <td>
+                          <span className="nm">{b.unitLabel}</span>
+                          <span className="sub">{b.unitLocation}</span>
+                        </td>
+                        <td>{b.clientName}</td>
+                        <td>{b.bookedOn}</td>
+                        <td>{b.saleValueAed?.toLocaleString()}</td>
+                        <td>
+                          <span className={`status ${b.status}`} title={b.statusHint}>
+                            {b.statusLabel ?? b.status}
+                          </span>
+                        </td>
+                        <td>
                           {b.status === 'hold' && (
                             <>
-                              <button className="row-cta" onClick={() => openConfirm('eoi', b.id)}>
-                                Convert to EOI
-                              </button>
-                              <button className="row-cta" onClick={() => openConfirm('release', b.id)}>
-                                Release unit
-                              </button>
-                            </>
-                          )}
-                          {b.status === 'eoi' && (
-                            <>
-                              <button
+                              <a
                                 className="row-cta"
-                                onClick={() => showToast(`Payment link re-sent to ${b.clientName} — valid for 72 hours.`)}
+                                href="#"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  openConfirm('eoi', b.id)
+                                }}
                               >
-                                Resend payment link
-                              </button>
-                              <button className="row-cta" onClick={() => showToast('EOI receipt download will begin shortly.')}>
-                                Download EOI receipt
-                              </button>
+                                Convert to EOI
+                              </a>
+                              <br />
                             </>
                           )}
-                          {b.status === 'reserved' && (
-                            <button className="row-cta" onClick={() => showToast('Reservation form download will begin shortly.')}>
-                              Download reservation form
-                            </button>
+                          {b.status === 'eoiPaid' && b.leadId && (
+                            <>
+                              <button className="row-cta" onClick={() => handleConvertToReserve(b.id, b.leadId)}>
+                                Convert to Reserve
+                              </button>
+                              <br />
+                            </>
                           )}
                           {b.status === 'spa' && (
+                            <>
+                              <Link className="row-cta" to="/commissions">
+                                View commission
+                              </Link>
+                              <br />
+                            </>
+                          )}
+                          {b.status === 'done' && (
                             <Link className="row-cta" to="/commissions">
-                              View commission line
+                              View commission
                             </Link>
                           )}
-                        </div>
-                      </td>
+                          {['hold', 'eoi', 'eoiPaid', 'reserved', 'spa', 'done'].includes(b.status) && (
+                            <button className="row-cta" onClick={() => setOpenDetailId(openDetailId === b.id ? null : b.id)}>
+                              {openDetailId === b.id ? 'Hide details' : 'View details'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {openDetailId === b.id && ['hold', 'eoi', 'eoiPaid', 'reserved', 'spa', 'done'].includes(b.status) && (
+                        <tr className="detail-row">
+                          <td colSpan={7}>
+                            <div className="timeline">
+                              {bookingTimeline(b.status).map((step) => (
+                                <span className={`step${step.state ? ` ${step.state}` : ''}`} key={step.label}>
+                                  {step.label}
+                                </span>
+                              ))}
+                            </div>
+                            <p className="next-step">
+                              <b>Next step:</b> {nextStepText(b) ?? 'No update yet.'}
+                            </p>
+                            <div className="d-actions">
+                              {b.status === 'hold' && (
+                                <>
+                                  <button className="row-cta" onClick={() => openConfirm('eoi', b.id)}>
+                                    Convert to EOI
+                                  </button>
+                                  <button className="row-cta" onClick={() => openConfirm('release', b.id)}>
+                                    Release unit
+                                  </button>
+                                </>
+                              )}
+                              {b.status === 'eoi' && (
+                                <button className="row-cta" onClick={() => openConfirm('release', b.id)}>
+                                  Release unit
+                                </button>
+                              )}
+                              {b.status === 'eoiPaid' && (
+                                <>
+                                  {b.leadId && (
+                                    <button className="row-cta" onClick={() => handleConvertToReserve(b.id, b.leadId)}>
+                                      Convert to Reserve
+                                    </button>
+                                  )}
+                                  {b.eoiTnxRefNo && (
+                                    <Link className="row-cta" to={`/payment-confirmation?TransRefNO=${b.eoiTnxRefNo}`}>
+                                      Download EOI receipt
+                                    </Link>
+                                  )}
+                                </>
+                              )}
+                              {b.status === 'reserved' && (
+                                <button className="row-cta" onClick={() => handleDownloadReservationForm(b.id, b.unitLabel)}>
+                                  Download reservation form
+                                </button>
+                              )}
+                              {b.status === 'spa' && (
+                                <Link className="row-cta" to="/commissions">
+                                  View commission line
+                                </Link>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                  {filteredRows.length === 0 && (
+                    <tr className="empty-row">
+                      <td colSpan={7}>No bookings in this stage yet.</td>
                     </tr>
                   )}
-                </Fragment>
-              ))}
-              {filteredRows.length === 0 && (
-                <tr className="empty-row">
-                  <td colSpan={8}>No bookings in this stage yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
 
       <ConfirmDialog
         open={!!confirmType}

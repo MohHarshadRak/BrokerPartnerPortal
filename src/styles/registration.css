@@ -20,7 +20,7 @@
 .registration h1{font-family:var(--font-display);font-weight:400;font-size:42px;line-height:1.1em;text-transform:capitalize;margin:14px 0 12px}
 .registration .lead{color:var(--rak-navy-60);max-width:640px;margin-bottom:40px}
 
-.registration .type-select{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:44px}
+.registration .type-select{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:44px}
 .registration .type-card{position:relative;display:block;padding:24px;background:var(--rak-white);border:1px solid var(--rak-navy-20);cursor:pointer;transition:border-color .2s ease}
 .registration .type-card input{position:absolute;opacity:0;pointer-events:none}
 .registration .type-card .t{font-family:var(--font-medium);font-size:14px;letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:8px}
@@ -38,11 +38,13 @@
 
 .registration label{display:block;font-family:var(--font-medium);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px}
 .registration label .req{color:var(--rak-terracotta)}
-.registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration select,.registration textarea{
+.registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration input[type=date],.registration select,.registration textarea{
   width:100%;height:50px;padding:0 16px;font-family:var(--font-body);font-size:15px;color:var(--rak-navy);
   background:var(--rak-mist);border:none;border-bottom:2px solid var(--rak-navy-20);border-radius:0;outline:none;
   transition:border-color .2s ease;
 }
+.registration input[type=date]{appearance:none}
+.registration input[type=date]::-webkit-calendar-picker-indicator{filter:invert(9%) sepia(28%) saturate(1800%) hue-rotate(175deg) brightness(90%);cursor:pointer}
 .registration textarea{height:auto;padding:14px 16px;min-height:96px;resize:vertical}
 .registration select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%23051c2c' fill='none' stroke-width='1.5'/></svg>");background-repeat:no-repeat;background-position:right 16px center}
 .registration input:focus,.registration select:focus,.registration textarea:focus{border-bottom-color:var(--rak-terracotta)}
@@ -67,7 +69,32 @@
 
 .registration .btn{display:inline-block;padding:0 42px;text-align:center;background:var(--rak-navy);color:var(--rak-white);font-size:12px;text-transform:uppercase;min-width:200px;height:48px;line-height:46px;border-radius:50px;border:2px solid var(--rak-navy);font-family:var(--font-medium);letter-spacing:1.5px;cursor:pointer;transition:background .25s ease,color .25s ease}
 .registration .btn:hover{background:transparent;color:var(--rak-navy)}
+.registration .btn:disabled{opacity:.6;cursor:default}
 .registration a.btn{text-decoration:none;display:inline-block}
+.registration .btn-outline{background:transparent;color:var(--rak-navy)}
+.registration .btn-outline:hover{background:var(--rak-navy);color:var(--rak-white)}
+
+.registration .wizard-actions{display:flex;justify-content:space-between;gap:16px;margin-top:8px}
+
+.registration .stepper{display:flex;align-items:flex-start;list-style:none;margin-bottom:40px}
+.registration .stepper-item{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 4px}
+.registration .stepper-item::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;background:var(--rak-navy-20);z-index:0}
+.registration .stepper-item:first-child::before{display:none}
+.registration .stepper-item.done::before{background:var(--rak-navy)}
+.registration .stepper-circle{
+  position:relative;z-index:1;display:flex;align-items:center;justify-content:center;
+  width:30px;height:30px;border-radius:50%;border:2px solid var(--rak-navy-20);background:var(--rak-white);
+  font-family:var(--font-medium);font-size:13px;color:var(--rak-navy-60);margin-bottom:8px;transition:all .2s ease;
+}
+.registration .stepper-item.done .stepper-circle{background:var(--rak-navy);border-color:var(--rak-navy);color:var(--rak-white)}
+.registration .stepper-item.active .stepper-circle{background:var(--rak-terracotta);border-color:var(--rak-terracotta);color:var(--rak-white)}
+.registration .stepper-label{font-family:var(--font-medium);font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--rak-navy-60);line-height:1.3em;max-width:110px}
+.registration .stepper-item.active .stepper-label{color:var(--rak-navy)}
+
+@media (max-width:640px){
+  .registration .stepper-label{display:none}
+  .registration .stepper-item::before{top:15px}
+}
 
 .registration .success{background:var(--rak-white);border-top:3px solid var(--rak-terracotta);padding:48px;text-align:center}
 .registration .success h2{font-family:var(--font-display);font-size:30px;font-weight:400;margin-bottom:10px}
@@ -87,6 +114,6 @@
   .registration .type-select,.registration .grid{grid-template-columns:1fr}
   .registration .card{padding:26px 20px}
   .registration .upload{flex-wrap:wrap}
-  .registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration select,.registration textarea{font-size:16px}
+  .registration input[type=text],.registration input[type=email],.registration input[type=tel],.registration input[type=number],.registration input[type=date],.registration select,.registration textarea{font-size:16px}
   .registration .topbar img{height:30px}
 }

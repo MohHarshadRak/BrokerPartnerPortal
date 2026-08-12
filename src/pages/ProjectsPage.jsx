@@ -1,10 +1,43 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useGetProjectsQuery, useGetProjectByIdQuery } from '../features/projects/projectsApi'
-import { useGetFormOptionsQuery } from '../features/lookups/lookupsApi'
+import {
+  useGetProjectsQuery,
+  useGetProjectByIdQuery,
+  useSearchUnitsQuery,
+  useGetMarketingKitQuery,
+  useDownloadMarketingKitMutation,
+} from '../features/projects/projectsApi'
 import { useToast } from '../components/useToast'
 
-const DISTRICTS = ['Downtown Mina', 'Raha Island', 'Hayat Island', 'Marjan']
+// Static — the Available units filters don't need a lookups round trip.
+// Value -1 means "any"; bedroom '4' means "4BR+" (see filteredUnits' bedFilter check below).
+const BEDROOM_OPTIONS = [
+  { value: '-1', label: 'Bedrooms - any' },
+  { value: '0', label: 'Studio' },
+  { value: '1', label: '1BR' },
+  { value: '2', label: '2BR' },
+  { value: '3', label: '3BR' },
+  { value: '4', label: '4BR+' },
+]
+const SIZE_OPTIONS = [
+  { value: '-1', label: 'Size - any' },
+  { value: '500', label: '500+' },
+  { value: '750', label: '750+' },
+  { value: '1000', label: '1,000+' },
+  { value: '1500', label: '1,500+' },
+  { value: '2000', label: '2,000+' },
+]
+// Price values are coded bands (not AED amounts) — see PRICE_CEILINGS below for what
+// each code actually filters against.
+const PRICE_OPTIONS = [
+  { value: '0', label: 'Price - any' },
+  { value: '1', label: 'upto 1 M' },
+  { value: '2', label: 'upto 2M' },
+  { value: '3', label: 'upto 3M' },
+  { value: '4', label: 'upto 5M' },
+  { value: '5', label: 'upto 10M' },
+]
+const PRICE_CEILINGS = { 1: 1_000_000, 2: 2_000_000, 3: 3_000_000, 4: 5_000_000, 5: 10_000_000 }
 
 // Construction progress rows follow a fixed build-phase order, with "Overall"
 // always last — matches the pattern used on rakproperties.ae project pages.
@@ -22,12 +55,14 @@ function orderedConstructionEntries(progress) {
 }
 
 function ProjectCard({ project, onOpen }) {
-  const kitCount = (project.kit ?? []).length
-  const openUnits = (project.units ?? []).filter((u) => u.status !== 'hold').length
   return (
     <article className="pcard" onClick={() => onOpen(project.id)} tabIndex={0} role="button" aria-label={`Open ${project.name} toolkit`}>
       <div className="img">
-        <span className={`tag${project.tag === 'New Launch' ? ' new' : ''}`}>{project.tag}</span>
+        {project.tag === 'New Launch' ? (
+          <span className="tag new">{project.tag}</span>
+        ) : (project.unitsOpen ?? 0) > 0 ? (
+          <span className="tag">For Sale</span>
+        ) : null}
         {project.image ? (
           <img src={project.image} alt={project.name} loading="lazy" />
         ) : (
@@ -39,10 +74,7 @@ function ProjectCard({ project, onOpen }) {
         <p className="loc">{project.location}</p>
         <div className="meta">
           <span>
-            <b>{kitCount}</b> assets ready
-          </span>
-          <span>
-            <b>{openUnits}</b> units open
+            <b>{project.unitsOpen ?? 0}</b> units open
           </span>
           <span>{project.status}</span>
         </div>
@@ -52,33 +84,73 @@ function ProjectCard({ project, onOpen }) {
   )
 }
 
-function ProjectDetail({ id, onBack }) {
+function ProjectDetail({ id, precinct, onBack }) {
   const { data: project } = useGetProjectByIdQuery(id)
-  const { data: options } = useGetFormOptionsQuery()
   const { toastNode, showToast } = useToast()
-  const bedroomOptions = options?.bedroomOptions ?? []
-  const sizeOptions = options?.sizeOptions ?? []
-  const priceOptions = options?.priceOptions ?? []
   const [unitQuery, setUnitQuery] = useState('')
-  const [bedFilter, setBedFilter] = useState('')
-  const [sizeFilter, setSizeFilter] = useState('')
-  const [priceFilter, setPriceFilter] = useState('')
+  const [bedFilter, setBedFilter] = useState('-1')
+  const [sizeFilter, setSizeFilter] = useState('-1')
+  const [priceFilter, setPriceFilter] = useState('0')
   const [monthIndex, setMonthIndex] = useState(0)
   const [videoPlaying, setVideoPlaying] = useState(false)
 
-  const units = project?.units ?? []
-  const filteredUnits = useMemo(
-    () =>
-      units.filter((u) => {
-        const okQ = !unitQuery || u.unit?.toLowerCase().includes(unitQuery.toLowerCase())
-        const okBed = !bedFilter || (bedFilter === '4' ? u.bedrooms >= 4 : u.bedrooms === Number(bedFilter))
-        const okSize = !sizeFilter || u.sizeSqft >= Number(sizeFilter)
-        const okPrice = !priceFilter || u.priceAed <= Number(priceFilter)
-        return okQ && okBed && okSize && okPrice
-      }),
-    [units, unitQuery, bedFilter, sizeFilter, priceFilter]
-  )
-  const openUnitsCount = filteredUnits.filter((u) => u.status !== 'hold').length
+  // id is the precinct id (from getProjects/BorkerPortal.GETPrecint) — Unit_Search's
+  // @PrecintID. Filtering happens server-side now; priceFilter's UI code (0/1..5) is
+  // converted to an actual AED ceiling (or -1 for "any") before the request goes out.
+  const { data: rawUnits = [] } = useSearchUnitsQuery({
+    precinctId: id,
+    bedrooms: Number(bedFilter),
+    size: Number(sizeFilter),
+    price: priceFilter === '0' ? -1 : PRICE_CEILINGS[priceFilter],
+    search: unitQuery,
+  })
+  // Re-derive status from statusLabel rather than trusting the API's separate status
+  // field — the two have been observed out of sync (status:"hold" + statusLabel:"Available").
+  // "reserved" gets its own key so it can be styled distinctly from the generic "hold" grey.
+  const filteredUnits = rawUnits.map((u) => ({
+    ...u,
+    status:
+      u.statusLabel === 'Available' ? 'available' : u.statusLabel === 'Reserved' ? 'reserved' : 'hold',
+  }))
+  const openUnitsCount = filteredUnits.filter((u) => u.status === 'available').length
+
+  // Real marketing-toolkit assets (Brochure/Floor Plan/Payment Plan/etc.) for this precinct.
+  const { data: kit = [] } = useGetMarketingKitQuery(id, { skip: !id })
+  const [downloadMarketingKit, { isLoading: downloadingKit }] = useDownloadMarketingKitMutation()
+
+  const handleDownloadKit = async () => {
+    try {
+      const blob = await downloadMarketingKit(id).unwrap()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${project?.name ?? precinct?.name ?? 'marketing-kit'}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      showToast(err?.data?.message || 'We could not prepare the marketing kit download. Please try again.')
+    }
+  }
+
+  // Real precinct summary facts (TBL_BrokerPortal_PrecintListing, via getProjects) — falls
+  // back to project?.facts (still unwired) only if none of these are populated yet.
+  const precinctFacts = [
+    ['Destination', precinct?.location],
+    ['Status', precinct?.summaryStatus],
+    ['Total Units', precinct?.totalUnits],
+    ['Unit Types', precinct?.unitType],
+    ['Size (sq ft)', precinct?.propertySize],
+    ['Completion Date', precinct?.completionDate],
+    ['Property Type', precinct?.propertyType],
+    ['Amenities', precinct?.amenities],
+  ].filter(([, v]) => v)
+  const facts = precinctFacts.length > 0 ? precinctFacts : project?.facts ?? []
+
+  // Real precinct gallery/render images (getProjects) — falls back to project?.gallery
+  // (still unwired) only if the precinct has none yet.
+  const gallery = precinct?.gallery?.length > 0 ? precinct.gallery : project?.gallery ?? []
 
   const construction = project?.construction ?? []
   const selectedMonth = construction[monthIndex]
@@ -90,16 +162,19 @@ function ProjectDetail({ id, onBack }) {
       </button>
 
       <div className="d-hero">
-        {project?.image && <img src={project.image} alt="" />}
+        {/* Same image/name already fetched for the precinct card on the list page (real
+            data) — used here instead of "Loading…" while getProjectById is still a
+            placeholder that never resolves. */}
+        {(precinct?.image ?? project?.image) && <img src={precinct?.image ?? project?.image} alt="" />}
         <div className="inner">
           <p className="eyebrow">{project?.location}</p>
-          <h2>{project?.name ?? 'Loading…'}</h2>
+          <h2>{precinct?.name ?? project?.name ?? 'Loading…'}</h2>
           <p className="statusline">{project?.statusLine}</p>
         </div>
       </div>
 
       <div className="facts">
-        {(project?.facts ?? []).map(([k, v]) => (
+        {facts.map(([k, v]) => (
           <div className="fact" key={k}>
             <p className="k">{k}</p>
             <p className="v">{v}</p>
@@ -120,7 +195,10 @@ function ProjectDetail({ id, onBack }) {
             </div>
             <div className="pad">
               <p className="dname">{project?.tagline}</p>
-              <p>{project?.description}</p>
+              {/* Same source as the hero image/name — TBL_BrokerPortal_PrecintListing.Description
+                  via BorkerPortal.GETPrecint, left-joined so it's still null for most precincts
+                  until that overlay table is populated. */}
+              <p>{precinct?.description ?? project?.description}</p>
             </div>
           </div>
 
@@ -128,30 +206,27 @@ function ProjectDetail({ id, onBack }) {
             <div className="card-head">
               <h3>Available units</h3>
               <span className="count-chip">
-                {units.length > 0 ? `${filteredUnits.length} units · ${openUnitsCount} open` : ''}
+                {rawUnits.length > 0 ? `${filteredUnits.length} units · ${openUnitsCount} open` : ''}
               </span>
             </div>
             <div className="unit-filters">
               <input type="search" placeholder="Unit no. — e.g. N-1204" aria-label="Search by unit number" value={unitQuery} onChange={(e) => setUnitQuery(e.target.value)} />
               <select aria-label="Bedrooms" value={bedFilter} onChange={(e) => setBedFilter(e.target.value)}>
-                <option value="">Bedrooms — any</option>
-                {bedroomOptions.map((o) => (
+                {BEDROOM_OPTIONS.map((o) => (
                   <option value={o.value} key={o.value}>
                     {o.label}
                   </option>
                 ))}
               </select>
               <select aria-label="Minimum size" value={sizeFilter} onChange={(e) => setSizeFilter(e.target.value)}>
-                <option value="">Size — any</option>
-                {sizeOptions.map((o) => (
+                {SIZE_OPTIONS.map((o) => (
                   <option value={o.value} key={o.value}>
                     {o.label}
                   </option>
                 ))}
               </select>
               <select aria-label="Maximum price" value={priceFilter} onChange={(e) => setPriceFilter(e.target.value)}>
-                <option value="">Price — any</option>
-                {priceOptions.map((o) => (
+                {PRICE_OPTIONS.map((o) => (
                   <option value={o.value} key={o.value}>
                     {o.label}
                   </option>
@@ -171,7 +246,7 @@ function ProjectDetail({ id, onBack }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {units.length === 0 ? (
+                  {rawUnits.length === 0 ? (
                     <tr className="empty-row">
                       <td colSpan={6}>
                         Inventory will appear here at launch — contact broker relations for early allocations.
@@ -185,13 +260,13 @@ function ProjectDetail({ id, onBack }) {
                             <span className="u">{u.unit}</span>
                           </td>
                           <td>{u.type}</td>
-                          <td>{u.sizeSqft}</td>
+                          <td>{u.sizeSqft?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                           <td>{u.priceAed?.toLocaleString()}</td>
                           <td>
                             <span className={`status ${u.status}`}>{u.statusLabel ?? u.status}</span>
                           </td>
                           <td>
-                            {u.status === 'hold' ? (
+                            {u.status !== 'available' ? (
                               <a
                                 className="row-cta"
                                 href="#"
@@ -203,7 +278,7 @@ function ProjectDetail({ id, onBack }) {
                                 Join waitlist
                               </a>
                             ) : (
-                              <Link className="row-cta" to="/bookings?new=1">
+                              <Link className="row-cta" to={`/bookings?new=1&unitId=${u.unitId}`}>
                                 Reserve
                               </Link>
                             )}
@@ -225,17 +300,17 @@ function ProjectDetail({ id, onBack }) {
           <div className="card" style={{ marginTop: 24 }}>
             <div className="card-head">
               <h3>Gallery &amp; renders</h3>
-              {(project?.gallery ?? []).length > 0 && (
+              {gallery.length > 0 && (
                 <span style={{ fontSize: 11, color: 'var(--rak-navy-60)' }}>Click to open full size</span>
               )}
             </div>
             <div className="gallery">
-              {(project?.gallery ?? []).map((src, i) => (
+              {gallery.map((src, i) => (
                 <a href={src} target="_blank" rel="noopener noreferrer" key={i}>
-                  <img src={src} alt={`${project?.name ?? ''} render`} loading="lazy" />
+                  <img src={src} alt={`${precinct?.name ?? project?.name ?? ''} render`} loading="lazy" />
                 </a>
               ))}
-              {(project?.gallery ?? []).length === 0 && (
+              {gallery.length === 0 && (
                 <p style={{ color: 'var(--rak-navy-60)', fontSize: 13, padding: '24px' }}>No renders uploaded yet.</p>
               )}
             </div>
@@ -316,10 +391,10 @@ function ProjectDetail({ id, onBack }) {
               <h3>Marketing toolkit</h3>
             </div>
             <div className="kit-list">
-              {(project?.kit ?? []).length === 0 && (
+              {(kit).length === 0 && (
                 <p style={{ color: 'var(--rak-navy-60)', fontSize: 13, padding: '14px 24px' }}>No assets attached yet.</p>
               )}
-              {(project?.kit ?? []).map((item, i) => (
+              {(kit).map((item, i) => (
                 <div className={`kit-item${item.soon ? ' soon' : ''}`} key={i}>
                   <span className="kit-ico">{item.icon}</span>
                   <div>
@@ -347,16 +422,10 @@ function ProjectDetail({ id, onBack }) {
                 </div>
               ))}
             </div>
-            {(project?.kit ?? []).length > 0 && (
+            {(kit).length > 0 && (
               <div className="kit-foot">
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() =>
-                    showToast(`Preparing the ${project?.name ?? ''} marketing kit — your download will begin shortly.`)
-                  }
-                >
-                  Download full kit (.zip)
+                <button className="btn" type="button" onClick={handleDownloadKit} disabled={downloadingKit}>
+                  {downloadingKit ? 'Preparing…' : 'Download full kit (.zip)'}
                 </button>
               </div>
             )}
@@ -379,20 +448,27 @@ function ProjectDetail({ id, onBack }) {
 function ProjectsPage() {
   const { data: projects } = useGetProjectsQuery()
   const [selectedId, setSelectedId] = useState(null)
-  const [masterplan, setMasterplan] = useState('all')
-  const [district, setDistrict] = useState('all')
+  const [projectName, setProjectName] = useState('all')
   const [query, setQuery] = useState('')
 
   const list = projects ?? []
+  // Chip options come straight from the data — one per distinct parent project name
+  // (BorkerPortal.GETPrecint's joined Projects.ProjectName), not a hardcoded list.
+  const projectNames = [...new Set(list.map((p) => p.projectName).filter(Boolean))]
   const filtered = list.filter((p) => {
-    const okMp = masterplan === 'all' || p.masterplan === masterplan
-    const okDist = district === 'all' || p.area === district
+    const okProject = projectName === 'all' || p.projectName === projectName
     const okQ = !query || p.name?.toLowerCase().includes(query.toLowerCase())
-    return okMp && okDist && okQ
+    return okProject && okQ
   })
 
   if (selectedId) {
-    return <ProjectDetail id={selectedId} onBack={() => setSelectedId(null)} />
+    return (
+      <ProjectDetail
+        id={selectedId}
+        precinct={list.find((p) => p.id === selectedId)}
+        onBack={() => setSelectedId(null)}
+      />
+    )
   }
 
   return (
@@ -405,21 +481,10 @@ function ProjectsPage() {
       </p>
 
       <div className="filterbar">
-        <span className="label">Masterplan</span>
-        {['all', 'Mina', 'The Strand'].map((mp) => (
-          <button key={mp} className={`chip${masterplan === mp ? ' active' : ''}`} type="button" onClick={() => setMasterplan(mp)}>
-            {mp === 'all' ? 'All' : mp}
-          </button>
-        ))}
-        <span className="label" style={{ marginLeft: 8 }}>
-          District
-        </span>
-        <button className={`chip${district === 'all' ? ' active' : ''}`} type="button" onClick={() => setDistrict('all')}>
-          All
-        </button>
-        {DISTRICTS.map((d) => (
-          <button key={d} className={`chip${district === d ? ' active' : ''}`} type="button" onClick={() => setDistrict(d)}>
-            {d === 'Marjan' ? 'Marjan Beach' : d}
+        <span className="label">Project</span>
+        {['all', ...projectNames].map((name) => (
+          <button key={name} className={`chip${projectName === name ? ' active' : ''}`} type="button" onClick={() => setProjectName(name)}>
+            {name === 'all' ? 'All' : name}
           </button>
         ))}
         <div className="search">
